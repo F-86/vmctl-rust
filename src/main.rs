@@ -39,6 +39,8 @@ enum AppMode {
     SnapshotInput,
     /// 快照操作确认
     SnapshotConfirm,
+    /// 克隆 VM 名称输入
+    CloneInput,
 }
 
 /// 可编辑的字段
@@ -113,6 +115,41 @@ enum SnapshotAction {
     Delete(String),
     /// 恢复到快照
     Revert(String),
+}
+
+/// 克隆 VM 输入状态
+struct CloneInputState {
+    /// 新 VM 名称输入缓冲区
+    buffer: String,
+    /// 源 VM 的 vmx 路径
+    source_vmx: PathBuf,
+    /// 源 VM 名称
+    source_name: String,
+    /// 克隆类型: full 或 linked
+    clone_type: CloneType,
+}
+
+/// 克隆类型
+#[derive(Debug, Clone, PartialEq)]
+enum CloneType {
+    Full,
+    Linked,
+}
+
+impl CloneType {
+    fn as_str(&self) -> &'static str {
+        match self {
+            CloneType::Full => "full",
+            CloneType::Linked => "linked",
+        }
+    }
+
+    fn display_name(&self) -> &'static str {
+        match self {
+            CloneType::Full => "完整克隆",
+            CloneType::Linked => "链接克隆",
+        }
+    }
 }
 
 /// 配置文件结构
@@ -290,6 +327,10 @@ fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str
         Line::from(vec![
             Span::styled("<i>", Style::new().fg(Color::Yellow)),
             Span::raw(" info"),
+        ]),
+        Line::from(vec![
+            Span::styled("<c>", Style::new().fg(Color::Yellow)),
+            Span::raw(" clone"),
         ]),
         Line::from(vec![
             Span::styled("<q>", Style::new().fg(Color::Yellow)),
@@ -911,6 +952,40 @@ fn render_snapshot_confirm(frame: &mut Frame, action: &SnapshotAction) {
     frame.render_widget(confirm_para, inner);
 }
 
+/// 渲染克隆 VM 输入框
+fn render_clone_input(frame: &mut Frame, ci: &CloneInputState) {
+    let area = frame.area();
+
+    let popup_width = 52u16.min(area.width - 4);
+    let popup_height = 7u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let title = format!(" 克隆: {} ", ci.source_name);
+    let popup_block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .style(Style::new().fg(Color::Cyan).bg(Color::Black));
+
+    let inner = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let type_label = format!(" 类型: {} [Tab 切换]", ci.clone_type.display_name());
+    let input_text = format!(" 名称: {}_ ", ci.buffer);
+
+    let input_para = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(type_label, Style::new().fg(Color::Yellow))),
+        Line::from(Span::styled(input_text, Style::new().fg(Color::White))),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            " [Enter] 克隆  [Tab] 切换类型  [Esc] 取消",
+            Style::new().fg(Color::DarkGray),
+        )),
+    ]));
+    frame.render_widget(input_para, inner);
+}
+
 /// 执行虚拟机操作
 fn execute_operation(
     manager: &VmManager,
@@ -971,6 +1046,7 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
     let mut snapshot_state: Option<SnapshotState> = None;
     let mut snapshot_input: Option<SnapshotInputState> = None;
     let mut snapshot_action: Option<SnapshotAction> = None;
+    let mut clone_input: Option<CloneInputState> = None;
 
     loop {
         // 获取当前虚拟机列表
@@ -1033,6 +1109,12 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                     }
                     if let Some(ref action) = snapshot_action {
                         render_snapshot_confirm(frame, action);
+                    }
+                }
+                AppMode::CloneInput => {
+                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage);
+                    if let Some(ref ci) = clone_input {
+                        render_clone_input(frame, ci);
                     }
                 }
             }
@@ -1116,6 +1198,23 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                                             message_timer = Some(std::time::Instant::now());
                                         }
                                     }
+                                }
+                            }
+                            KeyCode::Char('c') => {
+                                // 克隆虚拟机
+                                if let Some(vmx_path) = list_state.selected_vmx.clone() {
+                                    let vm_name = vms.iter()
+                                        .find(|vm| vm.vmx_path == vmx_path)
+                                        .map(|vm| vm.name.clone())
+                                        .unwrap_or_default();
+                                    clone_input = Some(CloneInputState {
+                                        buffer: format!("{}-clone", vm_name),
+                                        source_vmx: vmx_path,
+                                        source_name: vm_name,
+                                        clone_type: CloneType::Full,
+                                    });
+                                    app_mode = AppMode::CloneInput;
+                                    message = None;
                                 }
                             }
                             KeyCode::Enter | KeyCode::Char('x') | KeyCode::Char('p') | KeyCode::Char('r') => {
@@ -1494,6 +1593,68 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                             KeyCode::Char('n') | KeyCode::Esc => {
                                 snapshot_action = None;
                                 app_mode = AppMode::Snapshot;
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::CloneInput => {
+                        match key.code {
+                            KeyCode::Esc => {
+                                clone_input = None;
+                                app_mode = AppMode::List;
+                            }
+                            KeyCode::Tab => {
+                                // Tab 切换克隆类型
+                                if let Some(ref mut ci) = clone_input {
+                                    ci.clone_type = match ci.clone_type {
+                                        CloneType::Full => CloneType::Linked,
+                                        CloneType::Linked => CloneType::Full,
+                                    };
+                                }
+                            }
+                            KeyCode::Enter => {
+                                // 执行克隆
+                                if let Some(ref ci) = clone_input {
+                                    let name = ci.buffer.trim().to_string();
+                                    if !name.is_empty() {
+                                        // 构建目标路径: vm_dir/<name>.vmwarevm/<name>.vmx
+                                        let source_dir = ci.source_vmx.parent()
+                                            .and_then(|p| p.parent())
+                                            .unwrap_or(std::path::Path::new("."));
+                                        let dest_dir = source_dir.join(format!("{}.vmwarevm", name));
+                                        let dest_vmx = dest_dir.join(format!("{}.vmx", name));
+
+                                        // 克隆可能耗时较长
+                                        match Vmrun::clone_vm(
+                                            &ci.source_vmx,
+                                            &dest_vmx,
+                                            ci.clone_type.as_str(),
+                                            &name,
+                                        ) {
+                                            Ok(()) => {
+                                                message = Some(format!("✓ 已克隆为 \"{}\" ({})", name, ci.clone_type.display_name()));
+                                            }
+                                            Err(e) => {
+                                                message = Some(format!("✗ 克隆失败: {}", e));
+                                            }
+                                        }
+                                        message_timer = Some(std::time::Instant::now());
+                                    }
+                                }
+                                clone_input = None;
+                                app_mode = AppMode::List;
+                            }
+                            KeyCode::Backspace => {
+                                if let Some(ref mut ci) = clone_input {
+                                    ci.buffer.pop();
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if let Some(ref mut ci) = clone_input {
+                                    if ci.buffer.len() < 64 {
+                                        ci.buffer.push(c);
+                                    }
+                                }
                             }
                             _ => {}
                         }

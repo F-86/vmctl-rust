@@ -17,6 +17,7 @@ vmrun 是 VMware Fusion 提供的命令行工具，用于控制虚拟机的生�
 | `suspend` | `vmrun suspend <vmx>` | 挂起虚拟机（保存内存快照到 .vmss 文件） |
 | `list` | `vmrun list` | 列出所有正在运行的虚拟机路径 |
 | `getGuestIPAddress` | `vmrun getGuestIPAddress <vmx>` | 获取运行中 VM 的真实 IP 地址 |
+| `clone` | `vmrun clone <vmx> <dest> full\|linked` | 克隆虚拟机（完整/链接） |
 | `listSnapshots` | `vmrun listSnapshots <vmx>` | 列出虚拟机的所有快照 |
 | `snapshot` | `vmrun snapshot <vmx> <name>` | 创建快照 |
 | `deleteSnapshot` | `vmrun deleteSnapshot <vmx> <name>` | 删除快照 |

@@ -187,4 +187,17 @@ impl Vmrun {
             Ok(ip)
         }
     }
+
+    /// 克隆虚拟机
+    /// clone_type: "full" 或 "linked"
+    pub fn clone_vm(source_vmx: &PathBuf, dest_vmx: &PathBuf, clone_type: &str, clone_name: &str) -> Result<(), VmrunError> {
+        Self::execute(&[
+            "clone",
+            source_vmx.to_str().unwrap(),
+            dest_vmx.to_str().unwrap(),
+            clone_type,
+            &format!("-cloneName={}", clone_name),
+        ])?;
+        Ok(())
+    }
 }

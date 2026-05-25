@@ -95,7 +95,7 @@
 | `installTools` | 安装 VMware Tools | `vmrun installTools <vmx>` |
 | `upgradevm` | 升级虚拟硬件版本 | `vmrun upgradevm <vmx>` |
 | `deleteVM` | 删除虚拟机 | `vmrun deleteVM <vmx>` |
-| `clone` | 克隆虚拟机 | `vmrun clone <vmx> <目标vmx> full\|linked [-snapshot=名称]` |
+| ~~`clone`~~ | ~~克隆虚拟机~~ | ✅ 已实现 |
 | `downloadPhotonVM` | 下载 Photon OS 模板 | `vmrun downloadPhotonVM <路径>` |
 
 > `getGuestIPAddress` 已集成到本项目中，详见 `vmware-features-used.md`。
@@ -227,7 +227,7 @@ ovftool /path/to/input.ova /path/to/output.vmx
 |--------|------|------|
 | ~~★★★~~ | ~~快照管理~~ | ✅ 已实现 |
 | ~~★★★~~ | ~~`getGuestIPAddress`~~ | ✅ 已实现 |
-| ★★☆ | 克隆 VM | 创建测试环境常用 |
+| ~~★★☆~~ | ~~克隆 VM~~ | ✅ 已实现 |
 | ★★☆ | 端口转发管理 | 方便访问 VM 内服务 |
 | ★★☆ | 删除 VM | 完善生命周期管理 |
 | ★☆☆ | 共享文件夹 | 方便文件交换 |
