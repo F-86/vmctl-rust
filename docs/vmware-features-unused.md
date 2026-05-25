@@ -18,14 +18,9 @@
 
 ### 1.2 快照管理（Snapshot Commands）
 
-| 命令 | 功能 | 用法 |
-|------|------|------|
-| `listSnapshots` | 列出所有快照 | `vmrun listSnapshots <vmx> [showTree]` |
-| `snapshot` | 创建快照 | `vmrun snapshot <vmx> <快照名>` |
-| `deleteSnapshot` | 删除快照 | `vmrun deleteSnapshot <vmx> <快照名> [andDeleteChildren]` |
-| `revertToSnapshot` | 恢复到快照 | `vmrun revertToSnapshot <vmx> <快照名>` |
+### ~~1.2 快照管理（Snapshot Commands）~~ ✅ 已实现
 
-快照功能适合在修改系统前保存状态，出问题后一键回滚。
+> 快照管理已在本项目中实现，详见 `vmware-features-used.md`。
 
 ### 1.3 网络适配器管理（Network Adapter Commands）
 
@@ -230,7 +225,7 @@ ovftool /path/to/input.ova /path/to/output.vmx
 
 | 优先级 | 功能 | 理由 |
 |--------|------|------|
-| ★★★ | 快照管理 | 高频需求，命令简单，无需 VMware Tools |
+| ~~★★★~~ | ~~快照管理~~ | ✅ 已实现 |
 | ★★★ | `getGuestIPAddress` | 比 MAC 推算更准确 |
 | ★★☆ | 克隆 VM | 创建测试环境常用 |
 | ★★☆ | 端口转发管理 | 方便访问 VM 内服务 |

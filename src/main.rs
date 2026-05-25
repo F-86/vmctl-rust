@@ -19,7 +19,7 @@ mod vmx;
 
 use vm::{Vm, VmState};
 use manager::VmManager;
-use vmrun::set_vmrun_path;
+use vmrun::{set_vmrun_path, Vmrun};
 use vmx::{VmxFile, HardwareConfig};
 
 /// 应用模式
@@ -33,6 +33,12 @@ enum AppMode {
     Editing,
     /// 保存确认对话框
     Confirm,
+    /// 快照列表视图
+    Snapshot,
+    /// 快照名称输入（创建快照）
+    SnapshotInput,
+    /// 快照操作确认
+    SnapshotConfirm,
 }
 
 /// 可编辑的字段
@@ -80,6 +86,33 @@ struct DetailRow {
     editable: bool,
     /// 对应的编辑字段
     edit_field: Option<EditField>,
+}
+
+/// 快照视图状态
+struct SnapshotState {
+    /// 快照名列表
+    snapshots: Vec<String>,
+    /// 当前选中索引
+    selected: usize,
+    /// VM 名称
+    vm_name: String,
+    /// VM 的 vmx 路径
+    vmx_path: PathBuf,
+}
+
+/// 快照名称输入状态
+struct SnapshotInputState {
+    /// 输入缓冲区
+    buffer: String,
+}
+
+/// 快照操作类型（用于确认对话框）
+#[derive(Debug, Clone)]
+enum SnapshotAction {
+    /// 删除快照
+    Delete(String),
+    /// 恢复到快照
+    Revert(String),
 }
 
 /// 配置文件结构
@@ -238,6 +271,10 @@ fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str
         Line::from(vec![
             Span::styled("<x>", Style::new().fg(Color::Yellow)),
             Span::raw(" stop"),
+        ]),
+        Line::from(vec![
+            Span::styled("<n>", Style::new().fg(Color::Yellow)),
+            Span::raw(" snapshot"),
         ]),
     ];
 
@@ -645,6 +682,235 @@ fn render_confirm_dialog(frame: &mut Frame) {
     frame.render_widget(confirm_para, inner);
 }
 
+/// 渲染快照列表视图
+fn render_snapshot_view(frame: &mut Frame, ss: &SnapshotState, message: &Option<String>, ascii_art: &str) {
+    let area = frame.area();
+
+    // 主布局：header + 表格区域（和主界面一致）
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(7),   // 顶部 header
+            Constraint::Min(1),      // 快照表格
+        ])
+        .split(area);
+
+    // 顶部 header
+    render_snapshot_header(frame, chunks[0], ss, ascii_art);
+
+    // 快照表格
+    render_snapshot_table(frame, chunks[1], ss);
+
+    // 消息提示
+    if let Some(msg) = message {
+        let msg_para = Paragraph::new(Text::from(format!(" {}", msg)))
+            .style(Style::new().fg(Color::White).bg(Color::DarkGray))
+            .alignment(Alignment::Left);
+        frame.render_widget(msg_para, Rect::new(
+            chunks[1].x,
+            chunks[1].y + chunks[1].height.saturating_sub(3),
+            chunks[1].width,
+            3,
+        ));
+    }
+}
+
+/// 渲染快照视图的 header
+fn render_snapshot_header(frame: &mut Frame, area: Rect, ss: &SnapshotState, ascii_art: &str) {
+    let block = Block::default()
+        .style(Style::new().bg(Color::Black))
+        .borders(Borders::BOTTOM);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // 右侧：ASCII art (logo)
+    let ascii_lines = ascii_art.trim().lines().collect::<Vec<_>>();
+    let right_text: String = ascii_lines.iter()
+        .map(|line| format!("{}\n", line))
+        .collect::<String>();
+
+    let ascii_para = Paragraph::new(Text::from(right_text.trim_end()))
+        .style(Style::new().fg(Color::Cyan))
+        .alignment(Alignment::Right);
+
+    let ascii_width = 55.min(inner.width / 2);
+    let ascii_area = Rect::new(inner.x + inner.width - ascii_width, inner.y, ascii_width, inner.height);
+    frame.render_widget(ascii_para, ascii_area);
+
+    // 左侧：操作提示
+    let left_col = vec![
+        Line::from(vec![
+            Span::styled("<w/s>", Style::new().fg(Color::Yellow)),
+            Span::raw(" navigate"),
+        ]),
+        Line::from(vec![
+            Span::styled("<c>", Style::new().fg(Color::Green)),
+            Span::raw(" create"),
+        ]),
+        Line::from(vec![
+            Span::styled("<d>", Style::new().fg(Color::Red)),
+            Span::raw(" delete"),
+        ]),
+    ];
+
+    let right_col = vec![
+        Line::from(vec![
+            Span::styled("<r>", Style::new().fg(Color::Yellow)),
+            Span::raw(" revert"),
+        ]),
+        Line::from(vec![
+            Span::styled("<esc>", Style::new().fg(Color::Yellow)),
+            Span::raw(" back"),
+        ]),
+        Line::from(vec![
+            Span::styled("<n>", Style::new().fg(Color::Yellow)),
+            Span::raw(" back"),
+        ]),
+    ];
+
+    let col1_para = Paragraph::new(Text::from(left_col))
+        .style(Style::new().fg(Color::White))
+        .alignment(Alignment::Left);
+
+    let col2_para = Paragraph::new(Text::from(right_col))
+        .style(Style::new().fg(Color::White))
+        .alignment(Alignment::Left);
+
+    let content_width = inner.width - ascii_width - 5;
+    let col_width = content_width / 2;
+    frame.render_widget(col1_para, Rect::new(inner.x, inner.y + 1, col_width, 4));
+    frame.render_widget(col2_para, Rect::new(inner.x + col_width, inner.y + 1, col_width, 4));
+
+    // 左下角：VM 名称 + 快照数
+    let info_text = format!("Snapshots: {} ({})", ss.vm_name, ss.snapshots.len());
+    let info_para = Paragraph::new(Text::from(info_text))
+        .style(Style::new().fg(Color::DarkGray))
+        .alignment(Alignment::Left);
+    frame.render_widget(info_para, Rect::new(inner.x, inner.y + 5, 50, 1));
+}
+
+/// 渲染快照表格
+fn render_snapshot_table(frame: &mut Frame, area: Rect, ss: &SnapshotState) {
+    if ss.snapshots.is_empty() {
+        // 无快照提示
+        let empty_para = Paragraph::new(Text::from("\n  (无快照)"))
+            .style(Style::new().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::ALL).style(Style::new().bg(Color::Black)));
+        frame.render_widget(empty_para, area);
+        return;
+    }
+
+    let col_widths = &[
+        Constraint::Length(3),   // 选中标记
+        Constraint::Min(30),    // 快照名称
+    ];
+
+    let header = Row::new(vec![
+        Cell::from(Span::raw(" ")),
+        Cell::from(Span::raw(" SNAPSHOT NAME")),
+    ])
+    .style(Style::new().fg(Color::White).bg(Color::DarkGray));
+
+    let rows: Vec<Row> = ss.snapshots.iter().enumerate().map(|(i, name)| {
+        let is_selected = i == ss.selected;
+        let marker = if is_selected { " ▶" } else { "  " };
+
+        let row = Row::new(vec![
+            Cell::from(Span::raw(marker)),
+            Cell::from(Span::styled(
+                format!(" {}", name),
+                Style::new().fg(Color::White),
+            )),
+        ]);
+
+        if is_selected {
+            row.style(Style::new().bg(Color::Blue).fg(Color::White))
+        } else if i % 2 == 0 {
+            row.style(Style::new().bg(Color::Black))
+        } else {
+            row.style(Style::new().bg(Color::Rgb(30, 30, 30)))
+        }
+    }).collect();
+
+    let table = Table::new(rows, col_widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).style(Style::new().bg(Color::Black)))
+        .column_spacing(1);
+
+    let mut table_state = TableState::default();
+    table_state.select(Some(ss.selected));
+    frame.render_stateful_widget(table, area, &mut table_state);
+}
+
+/// 渲染快照名称输入框
+fn render_snapshot_input(frame: &mut Frame, sis: &SnapshotInputState) {
+    let area = frame.area();
+
+    let popup_width = 44u16.min(area.width - 4);
+    let popup_height = 5u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let popup_block = Block::default()
+        .title(" 创建快照 ")
+        .borders(Borders::ALL)
+        .style(Style::new().fg(Color::Green).bg(Color::Black));
+
+    let inner = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let input_text = format!(" > {}_ ", sis.buffer);
+    let input_para = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(input_text, Style::new().fg(Color::White))),
+        Line::from(Span::styled(
+            " [Enter] 确认  [Esc] 取消",
+            Style::new().fg(Color::DarkGray),
+        )),
+    ]));
+    frame.render_widget(input_para, inner);
+}
+
+/// 渲染快照操作确认对话框
+fn render_snapshot_confirm(frame: &mut Frame, action: &SnapshotAction) {
+    let area = frame.area();
+
+    let popup_width = 44u16.min(area.width - 4);
+    let popup_height = 5u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let (title, prompt) = match action {
+        SnapshotAction::Delete(name) => (
+            " 确认删除 ",
+            format!(" 删除快照 \"{}\"？", name),
+        ),
+        SnapshotAction::Revert(name) => (
+            " 确认恢复 ",
+            format!(" 恢复到快照 \"{}\"？", name),
+        ),
+    };
+
+    let popup_block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .style(Style::new().fg(Color::Yellow).bg(Color::Black));
+
+    let inner = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let confirm_para = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(prompt, Style::new().fg(Color::White))),
+        Line::from(Span::styled(
+            " [y] 确认  [n] 取消",
+            Style::new().fg(Color::DarkGray),
+        )),
+    ]));
+    frame.render_widget(confirm_para, inner);
+}
+
 /// 执行虚拟机操作
 fn execute_operation(
     manager: &VmManager,
@@ -702,6 +968,9 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
     let mut app_mode = AppMode::List;
     let mut detail_state: Option<DetailState> = None;
     let mut edit_state: Option<EditState> = None;
+    let mut snapshot_state: Option<SnapshotState> = None;
+    let mut snapshot_input: Option<SnapshotInputState> = None;
+    let mut snapshot_action: Option<SnapshotAction> = None;
 
     loop {
         // 获取当前虚拟机列表
@@ -743,6 +1012,27 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                     }
                     if let Some(ref es) = edit_state {
                         render_edit_overlay(frame, es);
+                    }
+                }
+                AppMode::Snapshot => {
+                    if let Some(ref ss) = snapshot_state {
+                        render_snapshot_view(frame, ss, &message, ascii_art);
+                    }
+                }
+                AppMode::SnapshotInput => {
+                    if let Some(ref ss) = snapshot_state {
+                        render_snapshot_view(frame, ss, &message, ascii_art);
+                    }
+                    if let Some(ref sis) = snapshot_input {
+                        render_snapshot_input(frame, sis);
+                    }
+                }
+                AppMode::SnapshotConfirm => {
+                    if let Some(ref ss) = snapshot_state {
+                        render_snapshot_view(frame, ss, &message, ascii_art);
+                    }
+                    if let Some(ref action) = snapshot_action {
+                        render_snapshot_confirm(frame, action);
                     }
                 }
             }
@@ -798,6 +1088,31 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                                         }
                                         Err(e) => {
                                             message = Some(format!("✗ 无法读取配置: {}", e));
+                                            message_timer = Some(std::time::Instant::now());
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Char('n') => {
+                                // 进入快照视图
+                                if let Some(vmx_path) = list_state.selected_vmx.clone() {
+                                    let vm_name = vms.iter()
+                                        .find(|vm| vm.vmx_path == vmx_path)
+                                        .map(|vm| vm.name.clone())
+                                        .unwrap_or_default();
+                                    match Vmrun::list_snapshots(&vmx_path) {
+                                        Ok(snapshots) => {
+                                            snapshot_state = Some(SnapshotState {
+                                                snapshots,
+                                                selected: 0,
+                                                vm_name,
+                                                vmx_path,
+                                            });
+                                            app_mode = AppMode::Snapshot;
+                                            message = None;
+                                        }
+                                        Err(e) => {
+                                            message = Some(format!("✗ 获取快照列表失败: {}", e));
                                             message_timer = Some(std::time::Instant::now());
                                         }
                                     }
@@ -1039,6 +1354,146 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                             }
                             KeyCode::Char('n') | KeyCode::Esc => {
                                 app_mode = AppMode::Detail;
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::Snapshot => {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('n') => {
+                                // 返回列表
+                                app_mode = AppMode::List;
+                                snapshot_state = None;
+                                message = None;
+                            }
+                            KeyCode::Char('s') | KeyCode::Down => {
+                                if let Some(ref mut ss) = snapshot_state {
+                                    if !ss.snapshots.is_empty() && ss.selected < ss.snapshots.len().saturating_sub(1) {
+                                        ss.selected += 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('w') | KeyCode::Up => {
+                                if let Some(ref mut ss) = snapshot_state {
+                                    if ss.selected > 0 {
+                                        ss.selected -= 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('c') => {
+                                // 创建快照：弹出输入框
+                                snapshot_input = Some(SnapshotInputState {
+                                    buffer: String::new(),
+                                });
+                                app_mode = AppMode::SnapshotInput;
+                                message = None;
+                            }
+                            KeyCode::Char('d') => {
+                                // 删除快照：需确认
+                                if let Some(ref ss) = snapshot_state {
+                                    if let Some(name) = ss.snapshots.get(ss.selected) {
+                                        snapshot_action = Some(SnapshotAction::Delete(name.clone()));
+                                        app_mode = AppMode::SnapshotConfirm;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('r') => {
+                                // 恢复快照：需确认
+                                if let Some(ref ss) = snapshot_state {
+                                    if let Some(name) = ss.snapshots.get(ss.selected) {
+                                        snapshot_action = Some(SnapshotAction::Revert(name.clone()));
+                                        app_mode = AppMode::SnapshotConfirm;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::SnapshotInput => {
+                        match key.code {
+                            KeyCode::Esc => {
+                                snapshot_input = None;
+                                app_mode = AppMode::Snapshot;
+                            }
+                            KeyCode::Enter => {
+                                // 创建快照
+                                if let (Some(ref sis), Some(ref mut ss)) = (&snapshot_input, &mut snapshot_state) {
+                                    let name = sis.buffer.trim().to_string();
+                                    if !name.is_empty() {
+                                        match Vmrun::create_snapshot(&ss.vmx_path, &name) {
+                                            Ok(()) => {
+                                                message = Some(format!("✓ 快照 \"{}\" 已创建", name));
+                                                // 刷新快照列表
+                                                if let Ok(snapshots) = Vmrun::list_snapshots(&ss.vmx_path) {
+                                                    ss.snapshots = snapshots;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                message = Some(format!("✗ 创建快照失败: {}", e));
+                                            }
+                                        }
+                                        message_timer = Some(std::time::Instant::now());
+                                    }
+                                }
+                                snapshot_input = None;
+                                app_mode = AppMode::Snapshot;
+                            }
+                            KeyCode::Backspace => {
+                                if let Some(ref mut sis) = snapshot_input {
+                                    sis.buffer.pop();
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if let Some(ref mut sis) = snapshot_input {
+                                    if sis.buffer.len() < 64 {
+                                        sis.buffer.push(c);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::SnapshotConfirm => {
+                        match key.code {
+                            KeyCode::Char('y') => {
+                                if let (Some(ref action), Some(ref mut ss)) = (&snapshot_action, &mut snapshot_state) {
+                                    match action {
+                                        SnapshotAction::Delete(name) => {
+                                            match Vmrun::delete_snapshot(&ss.vmx_path, name) {
+                                                Ok(()) => {
+                                                    message = Some(format!("✓ 快照 \"{}\" 已删除", name));
+                                                    // 刷新快照列表
+                                                    if let Ok(snapshots) = Vmrun::list_snapshots(&ss.vmx_path) {
+                                                        ss.snapshots = snapshots;
+                                                        if ss.selected >= ss.snapshots.len() && ss.selected > 0 {
+                                                            ss.selected -= 1;
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    message = Some(format!("✗ 删除快照失败: {}", e));
+                                                }
+                                            }
+                                        }
+                                        SnapshotAction::Revert(name) => {
+                                            match Vmrun::revert_to_snapshot(&ss.vmx_path, name) {
+                                                Ok(()) => {
+                                                    message = Some(format!("✓ 已恢复到快照 \"{}\"", name));
+                                                }
+                                                Err(e) => {
+                                                    message = Some(format!("✗ 恢复快照失败: {}", e));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    message_timer = Some(std::time::Instant::now());
+                                }
+                                snapshot_action = None;
+                                app_mode = AppMode::Snapshot;
+                            }
+                            KeyCode::Char('n') | KeyCode::Esc => {
+                                snapshot_action = None;
+                                app_mode = AppMode::Snapshot;
                             }
                             _ => {}
                         }

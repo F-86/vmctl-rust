@@ -16,6 +16,10 @@ vmrun 是 VMware Fusion 提供的命令行工具，用于控制虚拟机的生�
 | `stop` | `vmrun stop <vmx>` | 停止虚拟机（软关机） |
 | `suspend` | `vmrun suspend <vmx>` | 挂起虚拟机（保存内存快照到 .vmss 文件） |
 | `list` | `vmrun list` | 列出所有正在运行的虚拟机路径 |
+| `listSnapshots` | `vmrun listSnapshots <vmx>` | 列出虚拟机的所有快照 |
+| `snapshot` | `vmrun snapshot <vmx> <name>` | 创建快照 |
+| `deleteSnapshot` | `vmrun deleteSnapshot <vmx> <name>` | 删除快照 |
+| `revertToSnapshot` | `vmrun revertToSnapshot <vmx> <name>` | 恢复到指定快照 |
 
 ### 状态检测机制
 
@@ -45,6 +49,40 @@ Stopped（已停止）
 let output = Command::new("/Applications/VMware Fusion.app/Contents/Library/vmrun")
     .args(&["start", vmx_path, "nogui"])
     .output()?;
+```
+
+### 快照管理
+
+通过 TUI 中按 `n` 键进入快照视图，支持查看、创建、删除和恢复快照。
+
+`listSnapshots` 的输出格式：
+```
+Total snapshots: 3
+Snapshot1
+Snapshot2
+  ChildSnapshot
+```
+
+解析逻辑：跳过首行 `Total snapshots: N`，后续每行 trim 后即为快照名。
+
+```rust
+// src/vmrun.rs
+pub fn list_snapshots(vmx_path: &PathBuf) -> Result<Vec<String>, VmrunError> {
+    let output = Self::execute(&["listSnapshots", vmx_path.to_str().unwrap()])?;
+    // 跳过首行，每行 trim 为一个快照名
+}
+
+pub fn create_snapshot(vmx_path: &PathBuf, name: &str) -> Result<(), VmrunError> {
+    Self::execute(&["snapshot", vmx_path.to_str().unwrap(), name])?;
+}
+
+pub fn delete_snapshot(vmx_path: &PathBuf, name: &str) -> Result<(), VmrunError> {
+    Self::execute(&["deleteSnapshot", vmx_path.to_str().unwrap(), name])?;
+}
+
+pub fn revert_to_snapshot(vmx_path: &PathBuf, name: &str) -> Result<(), VmrunError> {
+    Self::execute(&["revertToSnapshot", vmx_path.to_str().unwrap(), name])?;
+}
 ```
 
 ---
