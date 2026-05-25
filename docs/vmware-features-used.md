@@ -72,18 +72,13 @@ stream.write_all(b"GET /api/vms HTTP/1.1\r\nHost: localhost\r\n\r\n")?;
 
 VMware Fusion 不提供直接查询单个 VM 状态的命令，本项目通过组合方式判断：
 
-```
-vmrun list → 获取运行中 VM 列表
-   ↓
-VM 在列表中？ ──是──→ Running（运行中）
-   │
-   否
-   ↓
-.vmss 文件存在？ ──是──→ Paused（已挂起）
-   │
-   否
-   ↓
-Stopped（已停止）
+```mermaid
+flowchart TD
+    A[vmrun list<br/>获取运行中 VM 列表] --> B{VM 在列表中？}
+    B -->|是| C[Running 运行中]
+    B -->|否| D{.vmss 文件存在？}
+    D -->|是| E[Paused 已挂起]
+    D -->|否| F[Stopped 已停止]
 ```
 
 - `vmrun list` 输出格式为每行一个 .vmx 绝对路径，首行为 `Total running VMs: N`
@@ -234,12 +229,9 @@ if self.state == VmState::Running {
 
 当 `getGuestIPAddress` 失败时（VM 未运行、Tools 未安装等），通过 .vmx 文件中的 MAC 地址后两字节推算 NAT 网段 IP：
 
-```
-MAC: 00:0C:29:50:A2:D3
-              ↓   ↓
-IP:  172.16. 80 .162
-         (0x50) (0xA2)
-```
+| MAC 地址 | 第4字节 | 第5字节 | 推算 IP |
+|----------|---------|---------|---------|
+| `00:0C:29:50:A2:D3` | `0x50` = 80 | `0xA2` = 162 | `172.16.80.162` |
 
 > 注意：MAC 推算仅在 NAT 模式下近似有效，桥接模式下可能不准确。
 
@@ -280,16 +272,15 @@ total_sectors * 512 / 1024 / 1024 / 1024 = size_gb
 
 macOS 上 VMware Fusion 将虚拟机组织为 .vmwarevm 包（实际是目录），本项目通过扫描此结构发现虚拟机：
 
-```
-Virtual Machines.localized/
-├── Ubuntu.vmwarevm/
-│   ├── Ubuntu.vmx          ← 主配置文件
-│   ├── Ubuntu.vmdk         ← 磁盘描述文件
-│   ├── Ubuntu-s001.vmdk    ← 磁盘数据分片
-│   ├── Ubuntu.vmss         ← 挂起时的内存快照（用于状态检测）
-│   └── ...
-└── Windows.vmwarevm/
-    └── ...
+```mermaid
+graph TD
+    ROOT["Virtual Machines.localized/"]
+    ROOT --> U["Ubuntu.vmwarevm/"]
+    ROOT --> W["Windows.vmwarevm/"]
+    U --> VMX["Ubuntu.vmx — 主配置文件"]
+    U --> VMDK["Ubuntu.vmdk — 磁盘描述文件"]
+    U --> S001["Ubuntu-s001.vmdk — 磁盘数据分片"]
+    U --> VMSS["Ubuntu.vmss — 挂起时的内存快照"]
 ```
 
 ### 发现逻辑

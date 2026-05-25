@@ -31,25 +31,22 @@ TUI（Terminal User Interface，终端用户界面）是一种在终端/控制�
 
 ### TUI 的工作原理
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  用户输入 (键盘)                                         │
-│       ↓                                                 │
-│  终端模拟器 (Terminal.app / iTerm2 / Alacritty)          │
-│       ↓                                                 │
-│  ┌─────────────────────────────────────────────┐        │
-│  │  TUI 程序                                    │        │
-│  │  1. 进入 Raw Mode (关闭行缓冲/回显)          │        │
-│  │  2. 进入 Alternate Screen (备用屏幕)         │        │
-│  │  3. 事件循环:                                │        │
-│  │     - 轮询键盘事件 (poll + read)             │        │
-│  │     - 更新内部状态                           │        │
-│  │     - 重绘整个屏幕 (ANSI 转义序列)           │        │
-│  │  4. 退出时恢复终端                           │        │
-│  └─────────────────────────────────────────────┘        │
-│       ↓                                                 │
-│  ANSI 转义序列 → 终端渲染彩色文本                        │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    A[用户输入 - 键盘] --> B[终端模拟器<br/>Terminal.app / iTerm2 / Alacritty]
+    B --> C[TUI 程序]
+    subgraph C[TUI 程序]
+        C1[1. 进入 Raw Mode<br/>关闭行缓冲/回显]
+        C2[2. 进入 Alternate Screen<br/>备用屏幕]
+        C3[3. 事件循环]
+        C4[4. 退出时恢复终端]
+        C1 --> C2 --> C3 --> C4
+    end
+    subgraph C3[事件循环]
+        E1[轮询键盘事件<br/>poll + read] --> E2[更新内部状态] --> E3[重绘整个屏幕<br/>ANSI 转义序列]
+        E3 --> E1
+    end
+    C --> D[ANSI 转义序列 → 终端渲染彩色文本]
 ```
 
 ### TUI vs GUI vs CLI
@@ -189,41 +186,61 @@ let mem_usage = (sys.used_memory() as f64 / sys.total_memory() as f64 * 100.0) a
 
 ### 模块结构
 
-```
-src/
-├── main.rs      (3190 行) — TUI 渲染、事件循环、UI 状态机
-├── vmrun.rs     (440 行)  — vmrun CLI 封装（所有 VMware 命令）
-├── vmx.rs       (336 行)  — .vmx 文件解析/写入、磁盘扩容
-├── vmrest.rs    (258 行)  — vmrest REST API 集成（Unix Socket）
-├── manager.rs   (216 行)  — VM 发现、状态刷新、线程管理
-└── vm.rs        (107 行)  — Vm 数据结构、IP 获取
+> 注：重构后已拆分为 30 个文件，详见 `src/` 目录。以下为逻辑分组。
+
+```mermaid
+graph LR
+    subgraph "入口层"
+        main["main.rs<br/>入口+配置"]
+        app["app.rs<br/>主循环骨架"]
+    end
+    subgraph "UI 层 (src/ui/)"
+        state["state.rs — 状态定义"]
+        header["header.rs"]
+        vm_list["vm_list.rs"]
+        detail["detail.rs"]
+        snapshot_ui["snapshot.rs"]
+        portfwd_ui["portfwd.rs"]
+        shared_ui["shared.rs"]
+        guest_ui["guest.rs"]
+    end
+    subgraph "事件层 (src/event/)"
+        event_mod["mod.rs — AppState+分发"]
+        list_ev["list.rs"]
+        detail_ev["detail.rs"]
+        snapshot_ev["snapshot.rs"]
+        guest_ev["guest.rs"]
+    end
+    subgraph "业务层"
+        vm["vm.rs — 数据结构"]
+        manager["manager.rs — 线程管理"]
+        vmrun["vmrun/ — CLI封装"]
+        vmx["vmx/ — 文件解析"]
+        vmrest["vmrest.rs — REST API"]
+    end
+    main --> app
+    app --> event_mod
+    app --> state
+    event_mod --> vmrun
+    event_mod --> vmx
+    event_mod --> vmrest
 ```
 
 ### 数据流
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ main.rs (事件循环)                                           │
-│                                                             │
-│  ┌──────────┐    ┌──────────────┐    ┌────────────────┐     │
-│  │ 键盘事件  │───→│ 状态机转换    │───→│ 渲染函数       │     │
-│  └──────────┘    └──────┬───────┘    └────────────────┘     │
-│                         │                                   │
-│                         ↓                                   │
-│              ┌──────────────────────┐                       │
-│              │ 执行操作 (vmrun/vmx) │                       │
-│              └──────────────────────┘                       │
-└─────────────────────────────────────────────────────────────┘
-         ↕                    ↕                    ↕
-┌─────────────────┐  ┌───────────────┐  ┌─────────────────┐
-│ manager.rs       │  │ vmrun.rs      │  │ vmrest.rs       │
-│ (后台刷新线程)   │  │ (CLI 命令)     │  │ (REST API)      │
-└────────┬────────┘  └───────┬───────┘  └────────┬────────┘
-         ↓                   ↓                    ↓
-┌─────────────────────────────────────────────────────────────┐
-│ VMware Fusion                                                │
-│  vmrun / vmware-vdiskmanager / vmrest / .vmx 文件            │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    KB[键盘事件] --> SM[状态机转换<br/>event/]
+    SM --> OP[执行操作<br/>vmrun / vmx]
+    SM --> RD[渲染函数<br/>ui/]
+
+    OP --> MGR[manager.rs<br/>后台刷新线程]
+    OP --> VMRUN[vmrun/<br/>CLI 命令]
+    OP --> REST[vmrest.rs<br/>REST API]
+
+    MGR --> VMW[VMware Fusion<br/>vmrun / vdiskmanager / .vmx]
+    VMRUN --> VMW
+    REST --> VMW
 ```
 
 ### 主循环伪代码
@@ -422,16 +439,14 @@ pub fn backup_and_write(&self) -> Result<(), VmxError> {
 
 #### 编辑模式流程
 
-```
-List 模式 ──[i]──→ Detail 模式 ──[e]──→ Editing 模式
-                    │                     │
-                    │ [W]                  │ [Enter] 验证通过
-                    ↓                     ↓
-              Confirm 模式           回到 Detail (dirty=true)
-                    │
-                    │ [y] backup_and_write()
-                    ↓
-              回到 Detail (dirty=false)
+```mermaid
+flowchart LR
+    List -->|i| Detail
+    Detail -->|e| Editing
+    Editing -->|Enter 验证通过| Detail2[Detail<br/>dirty=true]
+    Detail2 -->|W| Confirm
+    Confirm -->|y<br/>backup_and_write| Detail3[Detail<br/>dirty=false]
+    Confirm -->|n| Detail2
 ```
 
 ---
@@ -551,9 +566,7 @@ Vmrun::delete_vm(&vmx_path)?;  // vmrun deleteVM <vmx>
 
 VMware Fusion 的 NAT 网络（vmnet8）支持端口转发：将宿主机端口映射到虚拟机端口。
 
-```
-宿主机:2222 ──TCP──→ 虚拟机(172.16.170.128):22
-```
+例如：`宿主机:2222` (TCP) 转发到 `虚拟机(172.16.170.128):22`
 
 #### vmrun 命令
 
@@ -687,16 +700,14 @@ fn execute_guest(vmx_path: &PathBuf, user: &str, pass: &str, args: &[&str]) -> R
 
 #### 文件浏览器
 
-```
-user@Ubuntu: /home/user
-┌─────────────────────────────┐
-│ FILE / DIRECTORY             │
-│ ..                           │  ← Enter 返回上级
-│ Documents                    │  ← Enter 进入
-│ config.yaml                  │  ← o 下载 / d 删除
-│ script.sh                    │
-└─────────────────────────────┘
-```
+界面示意（`user@Ubuntu: /home/user`）：
+
+| FILE / DIRECTORY | 操作 |
+|------------------|------|
+| `..` | Enter 返回上级 |
+| `Documents` | Enter 进入 |
+| `config.yaml` | o 下载 / d 删除 |
+| `script.sh` | o 下载 / d 删除 |
 
 目录导航逻辑：
 
@@ -892,23 +903,44 @@ enum AppMode {
 
 **状态转换图**（简化）：
 
-```
-         ┌──[i]──→ Detail ──[e]──→ Editing ──[Enter]──→ Detail
-         │              ↑──[W]──→ Confirm ──[y]──→ Detail
-         │
-         ├──[n]──→ Snapshot ──[c]──→ SnapshotInput
-         │              ├──[d]──→ SnapshotConfirm
-         │              └──[r]──→ SnapshotConfirm
-         │
-List ────├──[c]──→ CloneInput
-         ├──[D]──→ DeleteConfirm
-         ├──[f]──→ PortForward ──[a]──→ PortForwardInput
-         │              └──[d]──→ PortForwardConfirm
-         ├──[h]──→ SharedFolder ──[a]──→ SharedFolderInput
-         │              └──[d]──→ SharedFolderConfirm
-         └──[g]──→ GuestLogin ──[Enter]──→ GuestFiles
-                                    ├──[u/o/m]──→ GuestFileInput
-                                    └──[d]──→ GuestFileConfirm
+```mermaid
+stateDiagram-v2
+    List --> Detail : i
+    List --> Snapshot : n
+    List --> CloneInput : c
+    List --> DeleteConfirm : D
+    List --> PortForward : f
+    List --> SharedFolder : h
+    List --> GuestLogin : g
+
+    Detail --> Editing : e
+    Detail --> Confirm : W
+    Editing --> Detail : Enter
+    Confirm --> Detail : y/n
+
+    Snapshot --> SnapshotInput : c
+    Snapshot --> SnapshotConfirm : d/r
+    SnapshotInput --> Snapshot : Enter/Esc
+    SnapshotConfirm --> Snapshot : y/n
+
+    CloneInput --> List : Enter/Esc
+    DeleteConfirm --> List : y/n
+
+    PortForward --> PortForwardInput : a
+    PortForward --> PortForwardConfirm : d
+    PortForwardInput --> PortForward : Enter/Esc
+    PortForwardConfirm --> PortForward : y/n
+
+    SharedFolder --> SharedFolderInput : a
+    SharedFolder --> SharedFolderConfirm : d
+    SharedFolderInput --> SharedFolder : Enter/Esc
+    SharedFolderConfirm --> SharedFolder : y/n
+
+    GuestLogin --> GuestFiles : Enter
+    GuestFiles --> GuestFileInput : u/o/m
+    GuestFiles --> GuestFileConfirm : d
+    GuestFileInput --> GuestFiles : Enter/Esc
+    GuestFileConfirm --> GuestFiles : y/n
 ```
 
 所有子视图都可以通过 `Esc` 返回上一级。
@@ -917,23 +949,23 @@ List ────├──[c]──→ CloneInput
 
 ## 6. 线程模型
 
-```
-┌─────────────────────────────────────────┐
-│ 主线程 (UI)                              │
-│ - 事件循环 (100ms poll)                  │
-│ - 渲染 (每次循环)                        │
-│ - 系统资源刷新 (每秒)                    │
-│ - 用户操作 (vmrun 调用)                  │
-└────────────────────┬────────────────────┘
-                     │ Arc<Mutex<Vec<Vm>>>
-                     │
-┌────────────────────┴────────────────────┐
-│ 后台线程 (状态刷新)                       │
-│ - 每 5 秒 (可配置)                       │
-│ - 重新扫描 VM 目录                       │
-│ - 刷新所有 VM 状态 (vmrun list)          │
-│ - 刷新 IP 地址 (getGuestIPAddress)       │
-└─────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph MainThread["主线程 (UI)"]
+        M1[事件循环 - 100ms poll]
+        M2[渲染 - 每次循环]
+        M3[系统资源刷新 - 每秒]
+        M4[用户操作 - vmrun 调用]
+    end
+
+    subgraph BgThread["后台线程 (状态刷新)"]
+        B1[每 5 秒执行]
+        B2[重新扫描 VM 目录]
+        B3[刷新所有 VM 状态 - vmrun list]
+        B4[刷新 IP 地址 - getGuestIPAddress]
+    end
+
+    MainThread <-->|"Arc&lt;Mutex&lt;Vec&lt;Vm&gt;&gt;&gt;"| BgThread
 ```
 
 **同步机制**: `Arc<Mutex<Vec<Vm>>>`
