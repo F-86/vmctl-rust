@@ -1388,7 +1388,7 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
         })?;
 
         // 事件处理
-        if event::poll(Duration::from_millis(100)).is_ok() {
+        if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
                     continue;
