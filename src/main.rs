@@ -55,6 +55,14 @@ enum AppMode {
     SharedFolderInput,
     /// 共享文件夹删除确认
     SharedFolderConfirm,
+    /// 客户系统文件浏览器
+    GuestFiles,
+    /// 客户系统凭据输入
+    GuestLogin,
+    /// 客户系统文件操作输入（复制/创建目录）
+    GuestFileInput,
+    /// 客户系统文件删除确认
+    GuestFileConfirm,
 }
 
 /// 可编辑的字段
@@ -265,6 +273,53 @@ impl SharedFolderInputState {
     }
 }
 
+/// 客户系统文件浏览器状态
+struct GuestFilesState {
+    /// VM vmx 路径
+    vmx_path: PathBuf,
+    /// VM 名称
+    vm_name: String,
+    /// 客户系统凭据
+    user: String,
+    pass: String,
+    /// 当前目录
+    current_dir: String,
+    /// 目录内容
+    entries: Vec<String>,
+    /// 当前选中索引
+    selected: usize,
+}
+
+/// 客户系统凭据输入状态
+struct GuestLoginState {
+    /// 当前字段 (0=用户名, 1=密码)
+    field_index: usize,
+    /// 字段值
+    fields: [String; 2],
+    /// 目标 VM
+    vmx_path: PathBuf,
+    vm_name: String,
+}
+
+/// 客户系统文件操作输入
+struct GuestFileInputState {
+    /// 操作类型
+    action: GuestFileAction,
+    /// 输入缓冲区
+    buffer: String,
+}
+
+/// 客户系统文件操作类型
+#[derive(Debug, Clone)]
+enum GuestFileAction {
+    /// 上传：输入宿主文件路径
+    Upload,
+    /// 下载：输入宿主保存路径
+    Download(String),
+    /// 创建目录：输入目录名
+    Mkdir,
+}
+
 /// 配置文件结构
 struct Config {
     vmrun_path: String,
@@ -452,6 +507,10 @@ fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str
         Line::from(vec![
             Span::styled("<h>", Style::new().fg(Color::Yellow)),
             Span::raw(" share"),
+        ]),
+        Line::from(vec![
+            Span::styled("<g>", Style::new().fg(Color::Yellow)),
+            Span::raw(" guest"),
         ]),
         Line::from(vec![
             Span::styled("<D>", Style::new().fg(Color::Red)),
@@ -1542,6 +1601,195 @@ fn render_shared_folder_delete_confirm(frame: &mut Frame, ss: &SharedFolderState
     frame.render_widget(para, inner);
 }
 
+/// 渲染客户系统凭据输入
+fn render_guest_login(frame: &mut Frame, gl: &GuestLoginState) {
+    let area = frame.area();
+    let popup_width = 48u16.min(area.width - 4);
+    let popup_height = 7u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let title = format!(" 登录: {} ", gl.vm_name);
+    let popup_block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .style(Style::new().fg(Color::Cyan).bg(Color::Black));
+    let inner = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let labels = ["用户名", "密码"];
+    let mut lines = Vec::new();
+    for i in 0..2 {
+        let marker = if i == gl.field_index { "▶" } else { " " };
+        let display = if i == 1 {
+            // 密码用 * 遮盖
+            if i == gl.field_index {
+                format!("{}_ ", "*".repeat(gl.fields[i].len()))
+            } else {
+                format!("{} ", "*".repeat(gl.fields[i].len()))
+            }
+        } else if i == gl.field_index {
+            format!("{}_ ", gl.fields[i])
+        } else {
+            format!("{} ", gl.fields[i])
+        };
+        let style = if i == gl.field_index { Style::new().fg(Color::White) } else { Style::new().fg(Color::DarkGray) };
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {} {}: ", marker, labels[i]), style),
+            Span::styled(display, Style::new().fg(Color::Cyan)),
+        ]));
+    }
+    lines.push(Line::from(Span::raw("")));
+    lines.push(Line::from(Span::styled(
+        " [Tab] 切换  [Enter] 登录  [Esc] 取消",
+        Style::new().fg(Color::DarkGray),
+    )));
+    frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// 渲染客户系统文件浏览器
+fn render_guest_files_view(frame: &mut Frame, gs: &GuestFilesState, message: &Option<String>, ascii_art: &str) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(7), Constraint::Min(1)])
+        .split(area);
+
+    // Header
+    let block = Block::default().style(Style::new().bg(Color::Black)).borders(Borders::BOTTOM);
+    let inner = block.inner(chunks[0]);
+    frame.render_widget(block, chunks[0]);
+
+    let ascii_lines = ascii_art.trim().lines().collect::<Vec<_>>();
+    let right_text: String = ascii_lines.iter().map(|l| format!("{}\n", l)).collect();
+    let ascii_para = Paragraph::new(Text::from(right_text.trim_end()))
+        .style(Style::new().fg(Color::Cyan)).alignment(Alignment::Right);
+    let ascii_width = 55.min(inner.width / 2);
+    frame.render_widget(ascii_para, Rect::new(inner.x + inner.width - ascii_width, inner.y, ascii_width, inner.height));
+
+    let left_col = vec![
+        Line::from(vec![Span::styled("<w/s>", Style::new().fg(Color::Yellow)), Span::raw(" navigate")]),
+        Line::from(vec![Span::styled("<enter>", Style::new().fg(Color::Green)), Span::raw(" open dir")]),
+        Line::from(vec![Span::styled("<u>", Style::new().fg(Color::Yellow)), Span::raw(" upload")]),
+    ];
+    let right_col = vec![
+        Line::from(vec![Span::styled("<o>", Style::new().fg(Color::Yellow)), Span::raw(" download")]),
+        Line::from(vec![Span::styled("<m>", Style::new().fg(Color::Yellow)), Span::raw(" mkdir")]),
+        Line::from(vec![Span::styled("<d>", Style::new().fg(Color::Red)), Span::raw(" delete")]),
+        Line::from(vec![Span::styled("<esc>", Style::new().fg(Color::Yellow)), Span::raw(" back")]),
+    ];
+
+    let content_width = inner.width - ascii_width - 5;
+    let col_width = content_width / 2;
+    frame.render_widget(Paragraph::new(Text::from(left_col)).alignment(Alignment::Left),
+        Rect::new(inner.x, inner.y, col_width, 4));
+    frame.render_widget(Paragraph::new(Text::from(right_col)).alignment(Alignment::Left),
+        Rect::new(inner.x + col_width, inner.y, col_width, 4));
+
+    let info = format!("{}@{}: {}", gs.user, gs.vm_name, gs.current_dir);
+    frame.render_widget(
+        Paragraph::new(Text::from(info)).style(Style::new().fg(Color::DarkGray)),
+        Rect::new(inner.x, inner.y + 5, inner.width.saturating_sub(ascii_width), 1),
+    );
+
+    // 文件列表表格
+    if gs.entries.is_empty() {
+        let empty = Paragraph::new(Text::from("\n  (空目录)"))
+            .style(Style::new().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::ALL).style(Style::new().bg(Color::Black)));
+        frame.render_widget(empty, chunks[1]);
+    } else {
+        let col_widths = &[Constraint::Min(30)];
+        let header = Row::new(vec![
+            Cell::from(Span::raw(" FILE / DIRECTORY")),
+        ]).style(Style::new().fg(Color::White).bg(Color::DarkGray));
+
+        let rows: Vec<Row> = gs.entries.iter().enumerate().map(|(i, entry)| {
+            let is_selected = i == gs.selected;
+            let row = Row::new(vec![
+                Cell::from(Span::raw(format!(" {}", entry))),
+            ]);
+            if is_selected {
+                row.style(Style::new().bg(Color::Blue).fg(Color::White))
+            } else if i % 2 == 0 {
+                row.style(Style::new().bg(Color::Black))
+            } else {
+                row.style(Style::new().bg(Color::Rgb(30, 30, 30)))
+            }
+        }).collect();
+
+        let table = Table::new(rows, col_widths)
+            .header(header)
+            .block(Block::default().borders(Borders::ALL).style(Style::new().bg(Color::Black)))
+            .column_spacing(1);
+        let mut table_state = TableState::default();
+        table_state.select(Some(gs.selected));
+        frame.render_stateful_widget(table, chunks[1], &mut table_state);
+    }
+
+    if let Some(msg) = message {
+        let msg_para = Paragraph::new(Text::from(format!(" {}", msg)))
+            .style(Style::new().fg(Color::White).bg(Color::DarkGray));
+        frame.render_widget(msg_para, Rect::new(
+            chunks[1].x, chunks[1].y + chunks[1].height.saturating_sub(3), chunks[1].width, 3,
+        ));
+    }
+}
+
+/// 渲染客户系统文件操作输入框
+fn render_guest_file_input(frame: &mut Frame, gfi: &GuestFileInputState) {
+    let area = frame.area();
+    let popup_width = 56u16.min(area.width - 4);
+    let popup_height = 5u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let title = match &gfi.action {
+        GuestFileAction::Upload => " 上传：输入宿主文件路径 ",
+        GuestFileAction::Download(_) => " 下载：输入宿主保存路径 ",
+        GuestFileAction::Mkdir => " 创建目录：输入目录名 ",
+    };
+
+    let popup_block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .style(Style::new().fg(Color::Cyan).bg(Color::Black));
+    let inner = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let para = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(format!(" > {}_ ", gfi.buffer), Style::new().fg(Color::White))),
+        Line::from(Span::styled(" [Enter] 确认  [Esc] 取消", Style::new().fg(Color::DarkGray))),
+    ]));
+    frame.render_widget(para, inner);
+}
+
+/// 渲染客户系统文件删除确认
+fn render_guest_file_delete_confirm(frame: &mut Frame, gs: &GuestFilesState) {
+    let area = frame.area();
+    let popup_width = 44u16.min(area.width - 4);
+    let popup_height = 5u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let popup_block = Block::default()
+        .title(" 确认删除 ")
+        .borders(Borders::ALL)
+        .style(Style::new().fg(Color::Red).bg(Color::Black));
+    let inner = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let entry_name = gs.entries.get(gs.selected).map(|s| s.as_str()).unwrap_or("?");
+    let para = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(format!(" 删除 \"{}\"？", entry_name), Style::new().fg(Color::White))),
+        Line::from(Span::styled(" [y] 确认  [n] 取消", Style::new().fg(Color::DarkGray))),
+    ]));
+    frame.render_widget(para, inner);
+}
+
 /// 执行虚拟机操作
 fn execute_operation(
     manager: &VmManager,
@@ -1610,6 +1858,9 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
     let mut portfwd_input: Option<PortForwardInputState> = None;
     let mut shared_state: Option<SharedFolderState> = None;
     let mut shared_input: Option<SharedFolderInputState> = None;
+    let mut guest_state: Option<GuestFilesState> = None;
+    let mut guest_login: Option<GuestLoginState> = None;
+    let mut guest_file_input: Option<GuestFileInputState> = None;
 
     loop {
         // 获取当前虚拟机列表
@@ -1723,6 +1974,31 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                     if let Some(ref ss) = shared_state {
                         render_shared_folder_view(frame, ss, &message, ascii_art);
                         render_shared_folder_delete_confirm(frame, ss);
+                    }
+                }
+                AppMode::GuestLogin => {
+                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage);
+                    if let Some(ref gl) = guest_login {
+                        render_guest_login(frame, gl);
+                    }
+                }
+                AppMode::GuestFiles => {
+                    if let Some(ref gs) = guest_state {
+                        render_guest_files_view(frame, gs, &message, ascii_art);
+                    }
+                }
+                AppMode::GuestFileInput => {
+                    if let Some(ref gs) = guest_state {
+                        render_guest_files_view(frame, gs, &message, ascii_art);
+                    }
+                    if let Some(ref gfi) = guest_file_input {
+                        render_guest_file_input(frame, gfi);
+                    }
+                }
+                AppMode::GuestFileConfirm => {
+                    if let Some(ref gs) = guest_state {
+                        render_guest_files_view(frame, gs, &message, ascii_art);
+                        render_guest_file_delete_confirm(frame, gs);
                     }
                 }
             }
@@ -1883,6 +2159,31 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                                     });
                                     app_mode = AppMode::SharedFolder;
                                     message = None;
+                                }
+                            }
+                            KeyCode::Char('g') => {
+                                // 进入客户系统文件管理（需要 VM 运行中）
+                                if let Some(vmx_path) = list_state.selected_vmx.clone() {
+                                    let vm_state = vms.iter()
+                                        .find(|vm| vm.vmx_path == vmx_path)
+                                        .map(|vm| &vm.state);
+                                    if vm_state == Some(&VmState::Running) {
+                                        let vm_name = vms.iter()
+                                            .find(|vm| vm.vmx_path == vmx_path)
+                                            .map(|vm| vm.name.clone())
+                                            .unwrap_or_default();
+                                        guest_login = Some(GuestLoginState {
+                                            field_index: 0,
+                                            fields: ["root".to_string(), String::new()],
+                                            vmx_path,
+                                            vm_name,
+                                        });
+                                        app_mode = AppMode::GuestLogin;
+                                        message = None;
+                                    } else {
+                                        message = Some("✗ 虚拟机必须运行中才能操作客户文件".to_string());
+                                        message_timer = Some(std::time::Instant::now());
+                                    }
                                 }
                             }
                             KeyCode::Enter | KeyCode::Char('x') | KeyCode::Char('p') | KeyCode::Char('r') => {
@@ -2630,6 +2931,250 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                             }
                             KeyCode::Char('n') | KeyCode::Esc => {
                                 app_mode = AppMode::SharedFolder;
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::GuestLogin => {
+                        match key.code {
+                            KeyCode::Esc => {
+                                guest_login = None;
+                                app_mode = AppMode::List;
+                            }
+                            KeyCode::Tab => {
+                                if let Some(ref mut gl) = guest_login {
+                                    gl.field_index = (gl.field_index + 1) % 2;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                // 尝试登录并列出根目录
+                                if let Some(ref gl) = guest_login {
+                                    let user = gl.fields[0].trim().to_string();
+                                    let pass = gl.fields[1].clone();
+                                    let start_dir = "/".to_string();
+                                    match Vmrun::list_directory_in_guest(&gl.vmx_path, &user, &pass, &start_dir) {
+                                        Ok(entries) => {
+                                            guest_state = Some(GuestFilesState {
+                                                vmx_path: gl.vmx_path.clone(),
+                                                vm_name: gl.vm_name.clone(),
+                                                user,
+                                                pass,
+                                                current_dir: start_dir,
+                                                entries,
+                                                selected: 0,
+                                            });
+                                            app_mode = AppMode::GuestFiles;
+                                            message = None;
+                                        }
+                                        Err(e) => {
+                                            message = Some(format!("✗ 登录失败: {}", e));
+                                            message_timer = Some(std::time::Instant::now());
+                                            app_mode = AppMode::List;
+                                        }
+                                    }
+                                }
+                                guest_login = None;
+                            }
+                            KeyCode::Backspace => {
+                                if let Some(ref mut gl) = guest_login {
+                                    gl.fields[gl.field_index].pop();
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if let Some(ref mut gl) = guest_login {
+                                    if gl.fields[gl.field_index].len() < 64 {
+                                        gl.fields[gl.field_index].push(c);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::GuestFiles => {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') => {
+                                app_mode = AppMode::List;
+                                guest_state = None;
+                                message = None;
+                            }
+                            KeyCode::Char('s') | KeyCode::Down => {
+                                if let Some(ref mut gs) = guest_state {
+                                    if !gs.entries.is_empty() && gs.selected < gs.entries.len().saturating_sub(1) {
+                                        gs.selected += 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('w') | KeyCode::Up => {
+                                if let Some(ref mut gs) = guest_state {
+                                    if gs.selected > 0 {
+                                        gs.selected -= 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Enter => {
+                                // 进入目录
+                                if let Some(ref mut gs) = guest_state {
+                                    if let Some(entry) = gs.entries.get(gs.selected).cloned() {
+                                        let new_dir = if entry == ".." {
+                                            // 返回上级
+                                            let parent = std::path::Path::new(&gs.current_dir)
+                                                .parent()
+                                                .map(|p| p.to_string_lossy().to_string())
+                                                .unwrap_or_else(|| "/".to_string());
+                                            if parent.is_empty() { "/".to_string() } else { parent }
+                                        } else {
+                                            let sep = if gs.current_dir.ends_with('/') { "" } else { "/" };
+                                            format!("{}{}{}", gs.current_dir, sep, entry)
+                                        };
+                                        match Vmrun::list_directory_in_guest(&gs.vmx_path, &gs.user, &gs.pass, &new_dir) {
+                                            Ok(entries) => {
+                                                gs.current_dir = new_dir;
+                                                gs.entries = entries;
+                                                gs.selected = 0;
+                                            }
+                                            Err(_) => {
+                                                // 可能是文件不是目录，忽略
+                                                message = Some("✗ 无法进入（可能是文件）".to_string());
+                                                message_timer = Some(std::time::Instant::now());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Char('u') => {
+                                // 上传文件
+                                guest_file_input = Some(GuestFileInputState {
+                                    action: GuestFileAction::Upload,
+                                    buffer: String::new(),
+                                });
+                                app_mode = AppMode::GuestFileInput;
+                            }
+                            KeyCode::Char('o') => {
+                                // 下载文件
+                                if let Some(ref gs) = guest_state {
+                                    if let Some(entry) = gs.entries.get(gs.selected).cloned() {
+                                        if entry != ".." {
+                                            let sep = if gs.current_dir.ends_with('/') { "" } else { "/" };
+                                            let guest_path = format!("{}{}{}", gs.current_dir, sep, entry);
+                                            guest_file_input = Some(GuestFileInputState {
+                                                action: GuestFileAction::Download(guest_path),
+                                                buffer: String::new(),
+                                            });
+                                            app_mode = AppMode::GuestFileInput;
+                                        }
+                                    }
+                                }
+                            }
+                            KeyCode::Char('m') => {
+                                // 创建目录
+                                guest_file_input = Some(GuestFileInputState {
+                                    action: GuestFileAction::Mkdir,
+                                    buffer: String::new(),
+                                });
+                                app_mode = AppMode::GuestFileInput;
+                            }
+                            KeyCode::Char('d') => {
+                                // 删除文件
+                                if let Some(ref gs) = guest_state {
+                                    if let Some(entry) = gs.entries.get(gs.selected) {
+                                        if entry != ".." {
+                                            app_mode = AppMode::GuestFileConfirm;
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::GuestFileInput => {
+                        match key.code {
+                            KeyCode::Esc => {
+                                guest_file_input = None;
+                                app_mode = AppMode::GuestFiles;
+                            }
+                            KeyCode::Enter => {
+                                if let (Some(ref gfi), Some(ref mut gs)) = (&guest_file_input, &mut guest_state) {
+                                    let path = gfi.buffer.trim().to_string();
+                                    if !path.is_empty() {
+                                        let result = match &gfi.action {
+                                            GuestFileAction::Upload => {
+                                                let sep = if gs.current_dir.ends_with('/') { "" } else { "/" };
+                                                let filename = std::path::Path::new(&path)
+                                                    .file_name()
+                                                    .map(|n| n.to_string_lossy().to_string())
+                                                    .unwrap_or_else(|| "file".to_string());
+                                                let guest_dest = format!("{}{}{}", gs.current_dir, sep, filename);
+                                                Vmrun::copy_file_to_guest(&gs.vmx_path, &gs.user, &gs.pass, &path, &guest_dest)
+                                                    .map(|_| format!("✓ 已上传到 {}", guest_dest))
+                                            }
+                                            GuestFileAction::Download(guest_path) => {
+                                                Vmrun::copy_file_from_guest(&gs.vmx_path, &gs.user, &gs.pass, guest_path, &path)
+                                                    .map(|_| format!("✓ 已下载到 {}", path))
+                                            }
+                                            GuestFileAction::Mkdir => {
+                                                let sep = if gs.current_dir.ends_with('/') { "" } else { "/" };
+                                                let new_dir = format!("{}{}{}", gs.current_dir, sep, path);
+                                                Vmrun::create_directory_in_guest(&gs.vmx_path, &gs.user, &gs.pass, &new_dir)
+                                                    .map(|_| format!("✓ 已创建目录 {}", new_dir))
+                                            }
+                                        };
+                                        match result {
+                                            Ok(msg) => message = Some(msg),
+                                            Err(e) => message = Some(format!("✗ {}", e)),
+                                        }
+                                        message_timer = Some(std::time::Instant::now());
+                                        // 刷新目录
+                                        if let Ok(entries) = Vmrun::list_directory_in_guest(&gs.vmx_path, &gs.user, &gs.pass, &gs.current_dir) {
+                                            gs.entries = entries;
+                                        }
+                                    }
+                                }
+                                guest_file_input = None;
+                                app_mode = AppMode::GuestFiles;
+                            }
+                            KeyCode::Backspace => {
+                                if let Some(ref mut gfi) = guest_file_input {
+                                    gfi.buffer.pop();
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if let Some(ref mut gfi) = guest_file_input {
+                                    if gfi.buffer.len() < 256 {
+                                        gfi.buffer.push(c);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::GuestFileConfirm => {
+                        match key.code {
+                            KeyCode::Char('y') => {
+                                if let Some(ref mut gs) = guest_state {
+                                    if let Some(entry) = gs.entries.get(gs.selected).cloned() {
+                                        let sep = if gs.current_dir.ends_with('/') { "" } else { "/" };
+                                        let full_path = format!("{}{}{}", gs.current_dir, sep, entry);
+                                        match Vmrun::delete_file_in_guest(&gs.vmx_path, &gs.user, &gs.pass, &full_path) {
+                                            Ok(()) => {
+                                                message = Some(format!("✓ 已删除 {}", entry));
+                                                if let Ok(entries) = Vmrun::list_directory_in_guest(&gs.vmx_path, &gs.user, &gs.pass, &gs.current_dir) {
+                                                    gs.entries = entries;
+                                                    if gs.selected >= gs.entries.len() && gs.selected > 0 {
+                                                        gs.selected -= 1;
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                message = Some(format!("✗ 删除失败: {}", e));
+                                            }
+                                        }
+                                        message_timer = Some(std::time::Instant::now());
+                                    }
+                                }
+                                app_mode = AppMode::GuestFiles;
+                            }
+                            KeyCode::Char('n') | KeyCode::Esc => {
+                                app_mode = AppMode::GuestFiles;
                             }
                             _ => {}
                         }

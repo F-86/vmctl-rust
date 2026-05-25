@@ -43,6 +43,18 @@
 
 需要 VMware Tools 已安装在客户系统中，且需要 `-gu`/`-gp` 参数提供客户系统凭据。
 
+**已实现（按 `g` 键进入文件浏览器）：**
+
+| 命令 | 功能 | 状态 |
+|------|------|------|
+| ~~`listDirectoryInGuest`~~ | 列出客户系统中目录内容 | ✅ 已实现 |
+| ~~`CopyFileFromHostToGuest`~~ | 从宿主复制文件到客户系统 | ✅ 已实现 |
+| ~~`CopyFileFromGuestToHost`~~ | 从客户系统复制文件到宿主 | ✅ 已实现 |
+| ~~`createDirectoryInGuest`~~ | 在客户系统中创建目录 | ✅ 已实现 |
+| ~~`deleteFileInGuest`~~ | 在客户系统中删除文件 | ✅ 已实现 |
+
+**未实现：**
+
 | 命令 | 功能 |
 |------|------|
 | `runProgramInGuest` | 在客户系统中运行程序 |
@@ -51,14 +63,9 @@
 | `killProcessInGuest` | 杀死客户系统中的进程 |
 | `fileExistsInGuest` | 检查客户系统中文件是否存在 |
 | `directoryExistsInGuest` | 检查客户系统中目录是否存在 |
-| `createDirectoryInGuest` | 在客户系统中创建目录 |
 | `deleteDirectoryInGuest` | 在客户系统中删除目录 |
-| `deleteFileInGuest` | 在客户系统中删除文件 |
 | `renameFileInGuest` | 在客户系统中重命名文件 |
-| `listDirectoryInGuest` | 列出客户系统中目录内容 |
 | `CreateTempfileInGuest` | 在客户系统中创建临时文件 |
-| `CopyFileFromHostToGuest` | 从宿主复制文件到客户系统 |
-| `CopyFileFromGuestToHost` | 从客户系统复制文件到宿主 |
 | `typeKeystrokesInGuest` | 向客户系统发送键盘输入 |
 | `captureScreen` | 截取虚拟机屏幕保存到宿主 |
 
@@ -220,5 +227,5 @@ ovftool /path/to/input.ova /path/to/output.vmx
 | ~~★★☆~~ | ~~端口转发管理~~ | ✅ 已实现 |
 | ~~★★☆~~ | ~~删除 VM~~ | ✅ 已实现 |
 | ~~★☆☆~~ | ~~共享文件夹~~ | ✅ 已实现 |
-| ★☆☆ | 客户系统文件操作 | 需要 VMware Tools + 凭据 |
+| ~~★☆☆~~ | ~~客户系统文件操作~~ | ✅ 已实现 |
 | ★☆☆ | vmrest 集成 | 大幅改变架构，适合 Web UI 场景 |

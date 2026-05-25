@@ -23,6 +23,11 @@ vmrun 是 VMware Fusion 提供的命令行工具，用于控制虚拟机的生�
 | `disableSharedFolders` | `vmrun disableSharedFolders <vmx> runtime` | 禁用共享文件夹 |
 | `addSharedFolder` | `vmrun addSharedFolder <vmx> <name> <path>` | 添加共享文件夹 |
 | `removeSharedFolder` | `vmrun removeSharedFolder <vmx> <name>` | 移除共享文件夹 |
+| `listDirectoryInGuest` | `vmrun -gu -gp listDirectoryInGuest <vmx> <dir>` | 列出客户系统目录 |
+| `CopyFileFromHostToGuest` | `vmrun -gu -gp CopyFileFromHostToGuest ...` | 上传文件到客户系统 |
+| `CopyFileFromGuestToHost` | `vmrun -gu -gp CopyFileFromGuestToHost ...` | 从客户系统下载文件 |
+| `createDirectoryInGuest` | `vmrun -gu -gp createDirectoryInGuest <vmx> <dir>` | 在客户系统中创建目录 |
+| `deleteFileInGuest` | `vmrun -gu -gp deleteFileInGuest <vmx> <path>` | 在客户系统中删除文件 |
 | `listHostNetworks` | `vmrun listHostNetworks` | 列出宿主虚拟网络 |
 | `listPortForwardings` | `vmrun listPortForwardings <net>` | 列出端口转发规则 |
 | `setPortForwarding` | `vmrun setPortForwarding <net> ...` | 添加端口转发规则 |
