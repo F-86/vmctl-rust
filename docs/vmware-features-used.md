@@ -18,6 +18,10 @@ vmrun 是 VMware Fusion 提供的命令行工具，用于控制虚拟机的生�
 | `list` | `vmrun list` | 列出所有正在运行的虚拟机路径 |
 | `getGuestIPAddress` | `vmrun getGuestIPAddress <vmx>` | 获取运行中 VM 的真实 IP 地址 |
 | `clone` | `vmrun clone <vmx> <dest> full\|linked` | 克隆虚拟机（完整/链接） |
+| `listHostNetworks` | `vmrun listHostNetworks` | 列出宿主虚拟网络 |
+| `listPortForwardings` | `vmrun listPortForwardings <net>` | 列出端口转发规则 |
+| `setPortForwarding` | `vmrun setPortForwarding <net> ...` | 添加端口转发规则 |
+| `deletePortForwarding` | `vmrun deletePortForwarding <net> ...` | 删除端口转发规则 |
 | `listSnapshots` | `vmrun listSnapshots <vmx>` | 列出虚拟机的所有快照 |
 | `snapshot` | `vmrun snapshot <vmx> <name>` | 创建快照 |
 | `deleteSnapshot` | `vmrun deleteSnapshot <vmx> <name>` | 删除快照 |

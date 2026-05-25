@@ -33,14 +33,9 @@
 
 网卡类型包括：`nat`、`bridged`、`hostonly`、`custom`。
 
-### 1.4 宿主网络管理（Host Network Commands）
+### ~~1.4 宿主网络管理（Host Network Commands）~~ ✅ 已实现
 
-| 命令 | 功能 | 用法 |
-|------|------|------|
-| `listHostNetworks` | 列出宿主上所有虚拟网络 | `vmrun listHostNetworks` |
-| `listPortForwardings` | 列出端口转发规则 | `vmrun listPortForwardings <网络名>` |
-| `setPortForwarding` | 添加/修改端口转发 | `vmrun setPortForwarding <网络名> <协议> <宿主端口> <客户IP> <客户端口>` |
-| `deletePortForwarding` | 删除端口转发 | `vmrun deletePortForwarding <网络名> <协议> <宿主端口>` |
+> 端口转发管理已在本项目中实现（按 `f` 键），详见 `vmware-features-used.md`。
 
 适合需要从宿主机访问虚拟机内服务的场景（如 SSH、Web 服务端口映射）。
 
@@ -228,7 +223,7 @@ ovftool /path/to/input.ova /path/to/output.vmx
 | ~~★★★~~ | ~~快照管理~~ | ✅ 已实现 |
 | ~~★★★~~ | ~~`getGuestIPAddress`~~ | ✅ 已实现 |
 | ~~★★☆~~ | ~~克隆 VM~~ | ✅ 已实现 |
-| ★★☆ | 端口转发管理 | 方便访问 VM 内服务 |
+| ~~★★☆~~ | ~~端口转发管理~~ | ✅ 已实现 |
 | ★★☆ | 删除 VM | 完善生命周期管理 |
 | ★☆☆ | 共享文件夹 | 方便文件交换 |
 | ★☆☆ | 客户系统文件操作 | 需要 VMware Tools + 凭据 |

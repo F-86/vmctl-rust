@@ -200,4 +200,131 @@ impl Vmrun {
         ])?;
         Ok(())
     }
+
+    /// 列出宿主网络，返回 NAT 类型的网络名称
+    pub fn list_nat_networks() -> Result<Vec<String>, VmrunError> {
+        let output = Self::execute(&["listHostNetworks"])?;
+        let mut nat_nets = Vec::new();
+        // 跳过前两行（Total + 表头）
+        for line in output.lines().skip(2) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            // INDEX NAME TYPE DHCP SUBNET MASK
+            if parts.len() >= 3 && parts[2].to_lowercase() == "nat" {
+                nat_nets.push(parts[1].to_string());
+            }
+        }
+        Ok(nat_nets)
+    }
+
+    /// 列出指定网络的端口转发规则
+    pub fn list_port_forwardings(network: &str) -> Result<Vec<PortForwarding>, VmrunError> {
+        let output = Self::execute(&["listPortForwardings", network])?;
+        let mut rules = Vec::new();
+        // 跳过首行 "Total port forwardings: N"
+        for line in output.lines().skip(1) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            // 格式: [protocol] host_port -> guest_ip:guest_port description
+            if let Some(rule) = PortForwarding::parse(trimmed) {
+                rules.push(rule);
+            }
+        }
+        Ok(rules)
+    }
+
+    /// 添加端口转发规则
+    pub fn set_port_forwarding(
+        network: &str,
+        protocol: &str,
+        host_port: u16,
+        guest_ip: &str,
+        guest_port: u16,
+        description: &str,
+    ) -> Result<(), VmrunError> {
+        Self::execute(&[
+            "setPortForwarding",
+            network,
+            protocol,
+            &host_port.to_string(),
+            guest_ip,
+            &guest_port.to_string(),
+            description,
+        ])?;
+        Ok(())
+    }
+
+    /// 删除端口转发规则
+    pub fn delete_port_forwarding(
+        network: &str,
+        protocol: &str,
+        host_port: u16,
+    ) -> Result<(), VmrunError> {
+        Self::execute(&[
+            "deletePortForwarding",
+            network,
+            protocol,
+            &host_port.to_string(),
+        ])?;
+        Ok(())
+    }
+}
+
+/// 端口转发规则
+#[derive(Debug, Clone)]
+pub struct PortForwarding {
+    /// 协议 (tcp/udp)
+    pub protocol: String,
+    /// 宿主端口
+    pub host_port: u16,
+    /// 客户 IP
+    pub guest_ip: String,
+    /// 客户端口
+    pub guest_port: u16,
+    /// 描述
+    pub description: String,
+}
+
+impl PortForwarding {
+    /// 解析 vmrun listPortForwardings 输出的一行
+    /// 格式示例: [tcp] 2222 -> 172.16.170.128:22 SSH
+    fn parse(line: &str) -> Option<Self> {
+        // [protocol] host_port -> guest_ip:guest_port description...
+        let line = line.trim();
+        if !line.starts_with('[') {
+            return None;
+        }
+        let bracket_end = line.find(']')?;
+        let protocol = line[1..bracket_end].to_string();
+        let rest = line[bracket_end + 1..].trim();
+
+        let parts: Vec<&str> = rest.splitn(4, ' ').collect();
+        // parts[0]=host_port, parts[1]="->" parts[2]=guest_ip:guest_port parts[3..]=description
+        if parts.len() < 3 {
+            return None;
+        }
+
+        let host_port: u16 = parts[0].parse().ok()?;
+        // guest_ip:guest_port
+        let guest_parts: Vec<&str> = parts[2].splitn(2, ':').collect();
+        if guest_parts.len() < 2 {
+            return None;
+        }
+        let guest_ip = guest_parts[0].to_string();
+        let guest_port: u16 = guest_parts[1].parse().ok()?;
+        let description = if parts.len() >= 4 {
+            parts[3].to_string()
+        } else {
+            String::new()
+        };
+
+        Some(PortForwarding {
+            protocol,
+            host_port,
+            guest_ip,
+            guest_port,
+            description,
+        })
+    }
 }
