@@ -201,6 +201,12 @@ impl Vmrun {
         Ok(())
     }
 
+    /// 删除虚拟机（不可恢复）
+    pub fn delete_vm(vmx_path: &PathBuf) -> Result<(), VmrunError> {
+        Self::execute(&["deleteVM", vmx_path.to_str().unwrap()])?;
+        Ok(())
+    }
+
     /// 列出宿主网络，返回 NAT 类型的网络名称
     pub fn list_nat_networks() -> Result<Vec<String>, VmrunError> {
         let output = Self::execute(&["listHostNetworks"])?;

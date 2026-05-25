@@ -89,7 +89,7 @@
 | `checkToolsState` | 检查 VMware Tools 状态 | `vmrun checkToolsState <vmx>` |
 | `installTools` | 安装 VMware Tools | `vmrun installTools <vmx>` |
 | `upgradevm` | 升级虚拟硬件版本 | `vmrun upgradevm <vmx>` |
-| `deleteVM` | 删除虚拟机 | `vmrun deleteVM <vmx>` |
+| ~~`deleteVM`~~ | ~~删除虚拟机~~ | ✅ 已实现 |
 | ~~`clone`~~ | ~~克隆虚拟机~~ | ✅ 已实现 |
 | `downloadPhotonVM` | 下载 Photon OS 模板 | `vmrun downloadPhotonVM <路径>` |
 
@@ -224,7 +224,7 @@ ovftool /path/to/input.ova /path/to/output.vmx
 | ~~★★★~~ | ~~`getGuestIPAddress`~~ | ✅ 已实现 |
 | ~~★★☆~~ | ~~克隆 VM~~ | ✅ 已实现 |
 | ~~★★☆~~ | ~~端口转发管理~~ | ✅ 已实现 |
-| ★★☆ | 删除 VM | 完善生命周期管理 |
+| ~~★★☆~~ | ~~删除 VM~~ | ✅ 已实现 |
 | ★☆☆ | 共享文件夹 | 方便文件交换 |
 | ★☆☆ | 客户系统文件操作 | 需要 VMware Tools + 凭据 |
 | ★☆☆ | vmrest 集成 | 大幅改变架构，适合 Web UI 场景 |

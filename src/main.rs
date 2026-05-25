@@ -47,6 +47,8 @@ enum AppMode {
     PortForwardInput,
     /// 端口转发删除确认
     PortForwardConfirm,
+    /// 删除 VM 确认
+    DeleteConfirm,
 }
 
 /// 可编辑的字段
@@ -393,6 +395,10 @@ fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str
         Line::from(vec![
             Span::styled("<c>", Style::new().fg(Color::Yellow)),
             Span::raw(" clone"),
+        ]),
+        Line::from(vec![
+            Span::styled("<D>", Style::new().fg(Color::Red)),
+            Span::raw(" delete"),
         ]),
         Line::from(vec![
             Span::styled("<q>", Style::new().fg(Color::Yellow)),
@@ -1226,6 +1232,34 @@ fn render_portfwd_delete_confirm(frame: &mut Frame, pfs: &PortForwardState) {
     frame.render_widget(para, inner);
 }
 
+/// 渲染删除 VM 确认对话框
+fn render_delete_vm_confirm(frame: &mut Frame, vms: &[Vm], list_state: &VmListState) {
+    let area = frame.area();
+    let popup_width = 48u16.min(area.width - 4);
+    let popup_height = 5u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let popup_block = Block::default()
+        .title(" ⚠ 确认删除 ")
+        .borders(Borders::ALL)
+        .style(Style::new().fg(Color::Red).bg(Color::Black));
+    let inner = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let vm_name = list_state.selected_vmx.as_ref()
+        .and_then(|path| vms.iter().find(|vm| &vm.vmx_path == path))
+        .map(|vm| vm.name.as_str())
+        .unwrap_or("?");
+
+    let para = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(format!(" 永久删除 \"{}\"？此操作不可恢复！", vm_name), Style::new().fg(Color::White))),
+        Line::from(Span::styled(" [y] 确认删除  [n] 取消", Style::new().fg(Color::DarkGray))),
+    ]));
+    frame.render_widget(para, inner);
+}
+
 /// 执行虚拟机操作
 fn execute_operation(
     manager: &VmManager,
@@ -1384,6 +1418,10 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                         render_portfwd_delete_confirm(frame, pfs);
                     }
                 }
+                AppMode::DeleteConfirm => {
+                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage);
+                    render_delete_vm_confirm(frame, &vms, &list_state);
+                }
             }
         })?;
 
@@ -1504,6 +1542,22 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                                     }
                                     Err(e) => {
                                         message = Some(format!("✗ 获取网络失败: {}", e));
+                                        message_timer = Some(std::time::Instant::now());
+                                    }
+                                }
+                            }
+                            KeyCode::Char('D') => {
+                                // 删除虚拟机（需确认）
+                                if let Some(ref vmx_path) = list_state.selected_vmx {
+                                    // 检查 VM 是否已停止
+                                    let vm_state = vms.iter()
+                                        .find(|vm| &vm.vmx_path == vmx_path)
+                                        .map(|vm| &vm.state);
+                                    if vm_state == Some(&VmState::Stopped) {
+                                        app_mode = AppMode::DeleteConfirm;
+                                        message = None;
+                                    } else {
+                                        message = Some("✗ 虚拟机必须停止后才能删除".to_string());
                                         message_timer = Some(std::time::Instant::now());
                                     }
                                 }
@@ -2086,6 +2140,33 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                             }
                             KeyCode::Char('n') | KeyCode::Esc => {
                                 app_mode = AppMode::PortForward;
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::DeleteConfirm => {
+                        match key.code {
+                            KeyCode::Char('y') => {
+                                if let Some(vmx_path) = list_state.selected_vmx.clone() {
+                                    match Vmrun::delete_vm(&vmx_path) {
+                                        Ok(()) => {
+                                            let vm_name = vms.iter()
+                                                .find(|vm| vm.vmx_path == vmx_path)
+                                                .map(|vm| vm.name.clone())
+                                                .unwrap_or_default();
+                                            message = Some(format!("✓ 虚拟机 \"{}\" 已删除", vm_name));
+                                            list_state.with_selection(&[], None);
+                                        }
+                                        Err(e) => {
+                                            message = Some(format!("✗ 删除失败: {}", e));
+                                        }
+                                    }
+                                    message_timer = Some(std::time::Instant::now());
+                                }
+                                app_mode = AppMode::List;
+                            }
+                            KeyCode::Char('n') | KeyCode::Esc => {
+                                app_mode = AppMode::List;
                             }
                             _ => {}
                         }
