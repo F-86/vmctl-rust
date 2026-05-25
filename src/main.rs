@@ -410,8 +410,8 @@ fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str
 
     let content_width = inner.width - ascii_width - 5;
     let col_width = content_width / 2;
-    frame.render_widget(col1_para, Rect::new(inner.x, inner.y + 1, col_width, 4));
-    frame.render_widget(col2_para, Rect::new(inner.x + col_width, inner.y + 1, col_width, 4));
+    frame.render_widget(col1_para, Rect::new(inner.x, inner.y, col_width, 5));
+    frame.render_widget(col2_para, Rect::new(inner.x + col_width, inner.y, col_width, 5));
 
     // 左下角：系统资源 + VM 数量
     let sys_text = format!("CPU: {:.0}%  MEM: {:.0}%   VMs: {}", cpu_usage, mem_usage, vm_count);
