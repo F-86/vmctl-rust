@@ -1278,6 +1278,9 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
     let mut message: Option<String> = None;
     let mut message_timer: Option<std::time::Instant> = None;
     let mut sys = System::new_all();
+    let mut cpu_usage: f32 = 0.0;
+    let mut mem_usage: f32 = 0.0;
+    let mut last_sys_refresh = std::time::Instant::now() - Duration::from_secs(2); // 立即触发首次刷新
 
     // 应用模式状态
     let mut app_mode = AppMode::List;
@@ -1302,13 +1305,16 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
             }
         }
 
-        // 刷新系统资源信息
-        sys.refresh_cpu_usage();
-        sys.refresh_memory();
-        let cpu_usage = sys.global_cpu_usage();
-        let used_mem = sys.used_memory() as f64;
-        let total_mem = sys.total_memory() as f64;
-        let mem_usage = (used_mem / total_mem * 100.0) as f32;
+        // 每秒刷新一次系统资源信息
+        if last_sys_refresh.elapsed() >= Duration::from_secs(1) {
+            sys.refresh_cpu_usage();
+            sys.refresh_memory();
+            cpu_usage = sys.global_cpu_usage();
+            let used_mem = sys.used_memory() as f64;
+            let total_mem = sys.total_memory() as f64;
+            mem_usage = (used_mem / total_mem * 100.0) as f32;
+            last_sys_refresh = std::time::Instant::now();
+        }
 
         // 渲染 UI
         terminal.draw(|frame| {
