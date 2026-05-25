@@ -49,6 +49,12 @@ enum AppMode {
     PortForwardConfirm,
     /// 删除 VM 确认
     DeleteConfirm,
+    /// 共享文件夹视图
+    SharedFolder,
+    /// 共享文件夹添加输入
+    SharedFolderInput,
+    /// 共享文件夹删除确认
+    SharedFolderConfirm,
 }
 
 /// 可编辑的字段
@@ -209,6 +215,53 @@ impl PortForwardInputState {
 
     fn current_field_mut(&mut self) -> &mut String {
         &mut self.fields[self.field_index]
+    }
+}
+
+/// 共享文件夹视图状态
+struct SharedFolderState {
+    /// VM 名称
+    vm_name: String,
+    /// VM vmx 路径
+    vmx_path: PathBuf,
+    /// 共享文件夹列表 (名称, 宿主路径, 是否可写)
+    folders: Vec<SharedFolderEntry>,
+    /// 当前选中索引
+    selected: usize,
+    /// 共享文件夹功能是否已启用
+    enabled: bool,
+}
+
+/// 共享文件夹条目
+#[derive(Debug, Clone)]
+struct SharedFolderEntry {
+    name: String,
+    host_path: String,
+    writable: bool,
+}
+
+/// 共享文件夹添加输入状态
+struct SharedFolderInputState {
+    /// 当前字段索引 (0=名称, 1=宿主路径)
+    field_index: usize,
+    /// 字段值
+    fields: [String; 2],
+}
+
+impl SharedFolderInputState {
+    fn new() -> Self {
+        Self {
+            field_index: 0,
+            fields: [String::new(), String::new()],
+        }
+    }
+
+    fn field_label(&self, index: usize) -> &'static str {
+        match index {
+            0 => "共享名称",
+            1 => "宿主路径",
+            _ => "",
+        }
     }
 }
 
@@ -395,6 +448,10 @@ fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str
         Line::from(vec![
             Span::styled("<c>", Style::new().fg(Color::Yellow)),
             Span::raw(" clone"),
+        ]),
+        Line::from(vec![
+            Span::styled("<h>", Style::new().fg(Color::Yellow)),
+            Span::raw(" share"),
         ]),
         Line::from(vec![
             Span::styled("<D>", Style::new().fg(Color::Red)),
@@ -1260,6 +1317,231 @@ fn render_delete_vm_confirm(frame: &mut Frame, vms: &[Vm], list_state: &VmListSt
     frame.render_widget(para, inner);
 }
 
+/// 从 .vmx 文件解析共享文件夹配置
+fn parse_shared_folders_from_vmx(vmx_path: &PathBuf) -> (Vec<SharedFolderEntry>, bool) {
+    let mut folders = Vec::new();
+    let mut enabled = false;
+
+    if let Ok(content) = std::fs::read_to_string(vmx_path) {
+        // 检测是否启用: sharedFolder.maxNum 或 isolation.tools.hgfs.disable = "FALSE"
+        for line in content.lines() {
+            let line = line.trim().to_lowercase();
+            if line.starts_with("sharedfolder.maxnum") {
+                if let Some(val) = line.split('=').nth(1) {
+                    let val = val.trim().trim_matches('"');
+                    if let Ok(n) = val.parse::<u32>() {
+                        if n > 0 {
+                            enabled = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 解析共享文件夹条目: sharedFolder0.present, sharedFolder0.hostPath, sharedFolder0.guestName, sharedFolder0.readAccess/writeAccess
+        for i in 0..16 {
+            let present_key = format!("sharedfolder{}.present", i);
+            let host_key = format!("sharedfolder{}.hostpath", i);
+            let name_key = format!("sharedfolder{}.guestname", i);
+            let write_key = format!("sharedfolder{}.writeaccess", i);
+
+            let mut present = false;
+            let mut host_path = String::new();
+            let mut name = String::new();
+            let mut writable = false;
+
+            for line in content.lines() {
+                let lower = line.trim().to_lowercase();
+                if let Some(eq_pos) = lower.find('=') {
+                    let key = lower[..eq_pos].trim();
+                    let val = line.trim()[eq_pos + 1..].trim().trim_matches('"').to_string();
+                    if key == present_key && val.to_lowercase() == "true" {
+                        present = true;
+                    } else if key == host_key {
+                        host_path = val;
+                    } else if key == name_key {
+                        name = val;
+                    } else if key == write_key && val.to_lowercase() == "true" {
+                        writable = true;
+                    }
+                }
+            }
+
+            if present && !name.is_empty() {
+                folders.push(SharedFolderEntry { name, host_path, writable });
+            }
+        }
+    }
+
+    (folders, enabled)
+}
+
+/// 渲染共享文件夹视图
+fn render_shared_folder_view(frame: &mut Frame, ss: &SharedFolderState, message: &Option<String>, ascii_art: &str) {
+    let area = frame.area();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(7), Constraint::Min(1)])
+        .split(area);
+
+    render_shared_folder_header(frame, chunks[0], ss, ascii_art);
+
+    if ss.folders.is_empty() {
+        let empty = Paragraph::new(Text::from("\n  (无共享文件夹)"))
+            .style(Style::new().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::ALL).style(Style::new().bg(Color::Black)));
+        frame.render_widget(empty, chunks[1]);
+    } else {
+        let col_widths = &[
+            Constraint::Length(16),  // 名称
+            Constraint::Min(25),     // 宿主路径
+            Constraint::Length(8),   // 权限
+        ];
+        let header = Row::new(vec![
+            Cell::from(Span::raw(" NAME")),
+            Cell::from(Span::raw(" HOST PATH")),
+            Cell::from(Span::raw(" MODE")),
+        ]).style(Style::new().fg(Color::White).bg(Color::DarkGray));
+
+        let rows: Vec<Row> = ss.folders.iter().enumerate().map(|(i, f)| {
+            let is_selected = i == ss.selected;
+            let mode = if f.writable { "RW" } else { "RO" };
+            let row = Row::new(vec![
+                Cell::from(Span::raw(format!(" {}", f.name))),
+                Cell::from(Span::raw(format!(" {}", f.host_path))),
+                Cell::from(Span::raw(format!(" {}", mode))),
+            ]);
+            if is_selected {
+                row.style(Style::new().bg(Color::Blue).fg(Color::White))
+            } else if i % 2 == 0 {
+                row.style(Style::new().bg(Color::Black))
+            } else {
+                row.style(Style::new().bg(Color::Rgb(30, 30, 30)))
+            }
+        }).collect();
+
+        let table = Table::new(rows, col_widths)
+            .header(header)
+            .block(Block::default().borders(Borders::ALL).style(Style::new().bg(Color::Black)))
+            .column_spacing(1);
+        let mut table_state = TableState::default();
+        table_state.select(Some(ss.selected));
+        frame.render_stateful_widget(table, chunks[1], &mut table_state);
+    }
+
+    if let Some(msg) = message {
+        let msg_para = Paragraph::new(Text::from(format!(" {}", msg)))
+            .style(Style::new().fg(Color::White).bg(Color::DarkGray));
+        frame.render_widget(msg_para, Rect::new(
+            chunks[1].x, chunks[1].y + chunks[1].height.saturating_sub(3), chunks[1].width, 3,
+        ));
+    }
+}
+
+/// 渲染共享文件夹 header
+fn render_shared_folder_header(frame: &mut Frame, area: Rect, ss: &SharedFolderState, ascii_art: &str) {
+    let block = Block::default().style(Style::new().bg(Color::Black)).borders(Borders::BOTTOM);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let ascii_lines = ascii_art.trim().lines().collect::<Vec<_>>();
+    let right_text: String = ascii_lines.iter().map(|l| format!("{}\n", l)).collect();
+    let ascii_para = Paragraph::new(Text::from(right_text.trim_end()))
+        .style(Style::new().fg(Color::Cyan)).alignment(Alignment::Right);
+    let ascii_width = 55.min(inner.width / 2);
+    frame.render_widget(ascii_para, Rect::new(inner.x + inner.width - ascii_width, inner.y, ascii_width, inner.height));
+
+    let enabled_label = if ss.enabled { "启用" } else { "禁用" };
+    let left_col = vec![
+        Line::from(vec![Span::styled("<w/s>", Style::new().fg(Color::Yellow)), Span::raw(" navigate")]),
+        Line::from(vec![Span::styled("<a>", Style::new().fg(Color::Green)), Span::raw(" add")]),
+        Line::from(vec![Span::styled("<d>", Style::new().fg(Color::Red)), Span::raw(" delete")]),
+    ];
+    let right_col = vec![
+        Line::from(vec![Span::styled("<e>", Style::new().fg(Color::Yellow)), Span::raw(format!(" toggle (当前: {})", enabled_label))]),
+        Line::from(vec![Span::styled("<esc>", Style::new().fg(Color::Yellow)), Span::raw(" back")]),
+    ];
+
+    let content_width = inner.width - ascii_width - 5;
+    let col_width = content_width / 2;
+    frame.render_widget(Paragraph::new(Text::from(left_col)).alignment(Alignment::Left),
+        Rect::new(inner.x, inner.y, col_width, 4));
+    frame.render_widget(Paragraph::new(Text::from(right_col)).alignment(Alignment::Left),
+        Rect::new(inner.x + col_width, inner.y, col_width, 4));
+
+    let info = format!("Shared Folders: {} ({})", ss.vm_name, ss.folders.len());
+    frame.render_widget(
+        Paragraph::new(Text::from(info)).style(Style::new().fg(Color::DarkGray)),
+        Rect::new(inner.x, inner.y + 5, 50, 1),
+    );
+}
+
+/// 渲染共享文件夹添加输入框
+fn render_shared_folder_input(frame: &mut Frame, si: &SharedFolderInputState) {
+    let area = frame.area();
+    let popup_width = 52u16.min(area.width - 4);
+    let popup_height = 7u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let popup_block = Block::default()
+        .title(" 添加共享文件夹 ")
+        .borders(Borders::ALL)
+        .style(Style::new().fg(Color::Green).bg(Color::Black));
+    let inner = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let mut lines = Vec::new();
+    for i in 0..2 {
+        let marker = if i == si.field_index { "▶" } else { " " };
+        let value_display = if i == si.field_index {
+            format!("{}_ ", si.fields[i])
+        } else {
+            format!("{} ", si.fields[i])
+        };
+        let style = if i == si.field_index { Style::new().fg(Color::White) } else { Style::new().fg(Color::DarkGray) };
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {} {}: ", marker, si.field_label(i)), style),
+            Span::styled(value_display, Style::new().fg(Color::Cyan)),
+        ]));
+    }
+    lines.push(Line::from(Span::raw("")));
+    lines.push(Line::from(Span::styled(
+        " [Tab] 切换  [Enter] 确认  [Esc] 取消",
+        Style::new().fg(Color::DarkGray),
+    )));
+    frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// 渲染共享文件夹删除确认
+fn render_shared_folder_delete_confirm(frame: &mut Frame, ss: &SharedFolderState) {
+    let area = frame.area();
+    let popup_width = 44u16.min(area.width - 4);
+    let popup_height = 5u16;
+    let popup_x = (area.width.saturating_sub(popup_width)) / 2;
+    let popup_y = (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let popup_block = Block::default()
+        .title(" 确认移除 ")
+        .borders(Borders::ALL)
+        .style(Style::new().fg(Color::Yellow).bg(Color::Black));
+    let inner = popup_block.inner(popup_area);
+    frame.render_widget(popup_block, popup_area);
+
+    let prompt = if let Some(f) = ss.folders.get(ss.selected) {
+        format!(" 移除共享 \"{}\"？", f.name)
+    } else {
+        " 移除此共享？".to_string()
+    };
+    let para = Paragraph::new(Text::from(vec![
+        Line::from(Span::styled(prompt, Style::new().fg(Color::White))),
+        Line::from(Span::styled(" [y] 确认  [n] 取消", Style::new().fg(Color::DarkGray))),
+    ]));
+    frame.render_widget(para, inner);
+}
+
 /// 执行虚拟机操作
 fn execute_operation(
     manager: &VmManager,
@@ -1326,6 +1608,8 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
     let mut clone_input: Option<CloneInputState> = None;
     let mut portfwd_state: Option<PortForwardState> = None;
     let mut portfwd_input: Option<PortForwardInputState> = None;
+    let mut shared_state: Option<SharedFolderState> = None;
+    let mut shared_input: Option<SharedFolderInputState> = None;
 
     loop {
         // 获取当前虚拟机列表
@@ -1421,6 +1705,25 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                 AppMode::DeleteConfirm => {
                     ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage);
                     render_delete_vm_confirm(frame, &vms, &list_state);
+                }
+                AppMode::SharedFolder => {
+                    if let Some(ref ss) = shared_state {
+                        render_shared_folder_view(frame, ss, &message, ascii_art);
+                    }
+                }
+                AppMode::SharedFolderInput => {
+                    if let Some(ref ss) = shared_state {
+                        render_shared_folder_view(frame, ss, &message, ascii_art);
+                    }
+                    if let Some(ref si) = shared_input {
+                        render_shared_folder_input(frame, si);
+                    }
+                }
+                AppMode::SharedFolderConfirm => {
+                    if let Some(ref ss) = shared_state {
+                        render_shared_folder_view(frame, ss, &message, ascii_art);
+                        render_shared_folder_delete_confirm(frame, ss);
+                    }
                 }
             }
         })?;
@@ -1560,6 +1863,26 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                                         message = Some("✗ 虚拟机必须停止后才能删除".to_string());
                                         message_timer = Some(std::time::Instant::now());
                                     }
+                                }
+                            }
+                            KeyCode::Char('h') => {
+                                // 进入共享文件夹管理
+                                if let Some(vmx_path) = list_state.selected_vmx.clone() {
+                                    let vm_name = vms.iter()
+                                        .find(|vm| vm.vmx_path == vmx_path)
+                                        .map(|vm| vm.name.clone())
+                                        .unwrap_or_default();
+                                    // 从 .vmx 文件解析共享文件夹配置
+                                    let (folders, enabled) = parse_shared_folders_from_vmx(&vmx_path);
+                                    shared_state = Some(SharedFolderState {
+                                        vm_name,
+                                        vmx_path,
+                                        folders,
+                                        selected: 0,
+                                        enabled,
+                                    });
+                                    app_mode = AppMode::SharedFolder;
+                                    message = None;
                                 }
                             }
                             KeyCode::Enter | KeyCode::Char('x') | KeyCode::Char('p') | KeyCode::Char('r') => {
@@ -2167,6 +2490,146 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                             }
                             KeyCode::Char('n') | KeyCode::Esc => {
                                 app_mode = AppMode::List;
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::SharedFolder => {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('h') => {
+                                app_mode = AppMode::List;
+                                shared_state = None;
+                                message = None;
+                            }
+                            KeyCode::Char('s') | KeyCode::Down => {
+                                if let Some(ref mut ss) = shared_state {
+                                    if !ss.folders.is_empty() && ss.selected < ss.folders.len().saturating_sub(1) {
+                                        ss.selected += 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('w') | KeyCode::Up => {
+                                if let Some(ref mut ss) = shared_state {
+                                    if ss.selected > 0 {
+                                        ss.selected -= 1;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('a') => {
+                                // 添加共享文件夹
+                                shared_input = Some(SharedFolderInputState::new());
+                                app_mode = AppMode::SharedFolderInput;
+                                message = None;
+                            }
+                            KeyCode::Char('d') => {
+                                // 删除共享文件夹
+                                if let Some(ref ss) = shared_state {
+                                    if !ss.folders.is_empty() {
+                                        app_mode = AppMode::SharedFolderConfirm;
+                                    }
+                                }
+                            }
+                            KeyCode::Char('e') => {
+                                // 启用/禁用共享文件夹功能
+                                if let Some(ref mut ss) = shared_state {
+                                    let result = if ss.enabled {
+                                        Vmrun::disable_shared_folders(&ss.vmx_path)
+                                    } else {
+                                        Vmrun::enable_shared_folders(&ss.vmx_path)
+                                    };
+                                    match result {
+                                        Ok(()) => {
+                                            ss.enabled = !ss.enabled;
+                                            let status = if ss.enabled { "已启用" } else { "已禁用" };
+                                            message = Some(format!("✓ 共享文件夹{}", status));
+                                        }
+                                        Err(e) => {
+                                            message = Some(format!("✗ 操作失败: {}", e));
+                                        }
+                                    }
+                                    message_timer = Some(std::time::Instant::now());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::SharedFolderInput => {
+                        match key.code {
+                            KeyCode::Esc => {
+                                shared_input = None;
+                                app_mode = AppMode::SharedFolder;
+                            }
+                            KeyCode::Tab => {
+                                if let Some(ref mut si) = shared_input {
+                                    si.field_index = (si.field_index + 1) % 2;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                if let (Some(ref si), Some(ref mut ss)) = (&shared_input, &mut shared_state) {
+                                    let name = si.fields[0].trim().to_string();
+                                    let host_path = si.fields[1].trim().to_string();
+                                    if !name.is_empty() && !host_path.is_empty() {
+                                        match Vmrun::add_shared_folder(&ss.vmx_path, &name, &host_path) {
+                                            Ok(()) => {
+                                                message = Some(format!("✓ 已添加共享 \"{}\"", name));
+                                                ss.folders.push(SharedFolderEntry {
+                                                    name,
+                                                    host_path,
+                                                    writable: true,
+                                                });
+                                            }
+                                            Err(e) => {
+                                                message = Some(format!("✗ 添加失败: {}", e));
+                                            }
+                                        }
+                                        message_timer = Some(std::time::Instant::now());
+                                    } else {
+                                        message = Some("✗ 名称和路径不能为空".to_string());
+                                        message_timer = Some(std::time::Instant::now());
+                                    }
+                                }
+                                shared_input = None;
+                                app_mode = AppMode::SharedFolder;
+                            }
+                            KeyCode::Backspace => {
+                                if let Some(ref mut si) = shared_input {
+                                    si.fields[si.field_index].pop();
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if let Some(ref mut si) = shared_input {
+                                    if si.fields[si.field_index].len() < 128 {
+                                        si.fields[si.field_index].push(c);
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    AppMode::SharedFolderConfirm => {
+                        match key.code {
+                            KeyCode::Char('y') => {
+                                if let Some(ref mut ss) = shared_state {
+                                    if let Some(folder) = ss.folders.get(ss.selected).cloned() {
+                                        match Vmrun::remove_shared_folder(&ss.vmx_path, &folder.name) {
+                                            Ok(()) => {
+                                                message = Some(format!("✓ 已移除共享 \"{}\"", folder.name));
+                                                ss.folders.remove(ss.selected);
+                                                if ss.selected >= ss.folders.len() && ss.selected > 0 {
+                                                    ss.selected -= 1;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                message = Some(format!("✗ 移除失败: {}", e));
+                                            }
+                                        }
+                                        message_timer = Some(std::time::Instant::now());
+                                    }
+                                }
+                                app_mode = AppMode::SharedFolder;
+                            }
+                            KeyCode::Char('n') | KeyCode::Esc => {
+                                app_mode = AppMode::SharedFolder;
                             }
                             _ => {}
                         }

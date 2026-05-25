@@ -207,6 +207,37 @@ impl Vmrun {
         Ok(())
     }
 
+    /// 启用共享文件夹
+    pub fn enable_shared_folders(vmx_path: &PathBuf) -> Result<(), VmrunError> {
+        Self::execute(&["enableSharedFolders", vmx_path.to_str().unwrap(), "runtime"])?;
+        Ok(())
+    }
+
+    /// 禁用共享文件夹
+    pub fn disable_shared_folders(vmx_path: &PathBuf) -> Result<(), VmrunError> {
+        Self::execute(&["disableSharedFolders", vmx_path.to_str().unwrap(), "runtime"])?;
+        Ok(())
+    }
+
+    /// 添加共享文件夹
+    pub fn add_shared_folder(vmx_path: &PathBuf, name: &str, host_path: &str) -> Result<(), VmrunError> {
+        Self::execute(&["addSharedFolder", vmx_path.to_str().unwrap(), name, host_path])?;
+        Ok(())
+    }
+
+    /// 移除共享文件夹
+    pub fn remove_shared_folder(vmx_path: &PathBuf, name: &str) -> Result<(), VmrunError> {
+        Self::execute(&["removeSharedFolder", vmx_path.to_str().unwrap(), name])?;
+        Ok(())
+    }
+
+    /// 设置共享文件夹状态（可读写/只读）
+    pub fn set_shared_folder_state(vmx_path: &PathBuf, name: &str, host_path: &str, writable: bool) -> Result<(), VmrunError> {
+        let mode = if writable { "writable" } else { "readonly" };
+        Self::execute(&["setSharedFolderState", vmx_path.to_str().unwrap(), name, host_path, mode])?;
+        Ok(())
+    }
+
     /// 列出宿主网络，返回 NAT 类型的网络名称
     pub fn list_nat_networks() -> Result<Vec<String>, VmrunError> {
         let output = Self::execute(&["listHostNetworks"])?;

@@ -62,15 +62,9 @@
 | `typeKeystrokesInGuest` | 向客户系统发送键盘输入 |
 | `captureScreen` | 截取虚拟机屏幕保存到宿主 |
 
-### 1.6 共享文件夹（Shared Folders）
+### ~~1.6 共享文件夹（Shared Folders）~~ ✅ 已实现
 
-| 命令 | 功能 |
-|------|------|
-| `enableSharedFolders` | 启用共享文件夹功能 |
-| `disableSharedFolders` | 禁用共享文件夹功能 |
-| `addSharedFolder` | 添加共享文件夹 |
-| `removeSharedFolder` | 移除共享文件夹 |
-| `setSharedFolderState` | 设置共享文件夹状态（可读/可写） |
+> 共享文件夹管理已在本项目中实现（按 `h` 键），详见 `vmware-features-used.md`。
 
 ### 1.7 设备与变量
 
@@ -225,6 +219,6 @@ ovftool /path/to/input.ova /path/to/output.vmx
 | ~~★★☆~~ | ~~克隆 VM~~ | ✅ 已实现 |
 | ~~★★☆~~ | ~~端口转发管理~~ | ✅ 已实现 |
 | ~~★★☆~~ | ~~删除 VM~~ | ✅ 已实现 |
-| ★☆☆ | 共享文件夹 | 方便文件交换 |
+| ~~★☆☆~~ | ~~共享文件夹~~ | ✅ 已实现 |
 | ★☆☆ | 客户系统文件操作 | 需要 VMware Tools + 凭据 |
 | ★☆☆ | vmrest 集成 | 大幅改变架构，适合 Web UI 场景 |

@@ -19,6 +19,10 @@ vmrun 是 VMware Fusion 提供的命令行工具，用于控制虚拟机的生�
 | `getGuestIPAddress` | `vmrun getGuestIPAddress <vmx>` | 获取运行中 VM 的真实 IP 地址 |
 | `clone` | `vmrun clone <vmx> <dest> full\|linked` | 克隆虚拟机（完整/链接） |
 | `deleteVM` | `vmrun deleteVM <vmx>` | 删除虚拟机（不可恢复） |
+| `enableSharedFolders` | `vmrun enableSharedFolders <vmx> runtime` | 启用共享文件夹 |
+| `disableSharedFolders` | `vmrun disableSharedFolders <vmx> runtime` | 禁用共享文件夹 |
+| `addSharedFolder` | `vmrun addSharedFolder <vmx> <name> <path>` | 添加共享文件夹 |
+| `removeSharedFolder` | `vmrun removeSharedFolder <vmx> <name>` | 移除共享文件夹 |
 | `listHostNetworks` | `vmrun listHostNetworks` | 列出宿主虚拟网络 |
 | `listPortForwardings` | `vmrun listPortForwardings <net>` | 列出端口转发规则 |
 | `setPortForwarding` | `vmrun setPortForwarding <net> ...` | 添加端口转发规则 |
