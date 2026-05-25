@@ -16,11 +16,13 @@ mod vm;
 mod vmrun;
 mod manager;
 mod vmx;
+mod vmrest;
 
 use vm::{Vm, VmState};
 use manager::VmManager;
 use vmrun::{set_vmrun_path, Vmrun};
 use vmx::{VmxFile, HardwareConfig};
+use vmrest::VmrestService;
 
 /// 应用模式
 #[derive(Debug, Clone, PartialEq)]
@@ -412,7 +414,7 @@ impl VmListState {
 }
 
 /// 渲染 UI
-fn ui(frame: &mut Frame, vms: &[Vm], list_state: &mut VmListState, message: &Option<String>, vm_count: usize, ascii_art: &str, cpu_usage: f32, mem_usage: f32) {
+fn ui(frame: &mut Frame, vms: &[Vm], list_state: &mut VmListState, message: &Option<String>, vm_count: usize, ascii_art: &str, cpu_usage: f32, mem_usage: f32, vmrest_running: bool) {
     let area = frame.area();
 
     // 主布局：标题栏 + 表格区域
@@ -425,7 +427,7 @@ fn ui(frame: &mut Frame, vms: &[Vm], list_state: &mut VmListState, message: &Opt
         .split(area);
 
     // 顶部标题栏（ASCII art + 操作提示 + 系统资源）
-    render_header(frame, chunks[0], vm_count, ascii_art, cpu_usage, mem_usage);
+    render_header(frame, chunks[0], vm_count, ascii_art, cpu_usage, mem_usage, vmrest_running);
 
     // 表格区域
     render_table(frame, chunks[1], vms, list_state);
@@ -440,7 +442,7 @@ fn ui(frame: &mut Frame, vms: &[Vm], list_state: &mut VmListState, message: &Opt
 }
 
 /// 渲染顶部标题栏（ASCII 艺术字 + 操作提示 + 系统资源）
-fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str, cpu_usage: f32, mem_usage: f32) {
+fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str, cpu_usage: f32, mem_usage: f32, vmrest_running: bool) {
     let block = Block::default()
         .style(Style::new().bg(Color::Black))
         .borders(Borders::BOTTOM);
@@ -480,6 +482,7 @@ fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str
     ];
     let col3 = vec![
         Line::from(vec![Span::styled("<g>", Style::new().fg(Color::Yellow)), Span::raw(" guest")]),
+        Line::from(vec![Span::styled("<R>", Style::new().fg(Color::Yellow)), Span::raw(" rest")]),
         Line::from(vec![Span::styled("<D>", Style::new().fg(Color::Red)), Span::raw(" delete")]),
         Line::from(vec![Span::styled("<q>", Style::new().fg(Color::Yellow)), Span::raw(" quit")]),
     ];
@@ -499,8 +502,9 @@ fn render_header(frame: &mut Frame, area: Rect, vm_count: usize, ascii_art: &str
         Rect::new(inner.x + col_width * 2, inner.y, col_width, 5),
     );
 
-    // 左下角：系统资源 + VM 数量
-    let sys_text = format!("CPU: {:.0}%  MEM: {:.0}%   VMs: {}", cpu_usage, mem_usage, vm_count);
+    // 左下角：系统资源 + VM 数量 + vmrest 状态
+    let rest_status = if vmrest_running { "●" } else { "○" };
+    let sys_text = format!("CPU: {:.0}%  MEM: {:.0}%  VMs: {}  REST: {}", cpu_usage, mem_usage, vm_count, rest_status);
     let sys_para = Paragraph::new(Text::from(sys_text))
         .style(Style::new().fg(Color::DarkGray))
         .alignment(Alignment::Left);
@@ -1794,14 +1798,17 @@ fn main() -> io::Result<()> {
     // 启动状态刷新线程
     manager.start_state_refresher(config.refresh_interval);
 
+    // 创建 vmrest 服务
+    let vmrest_service = VmrestService::new();
+
     // 初始化终端
     let mut terminal = ratatui::init();
-    let result = run_app(&mut terminal, &manager, &ascii_art);
+    let result = run_app(&mut terminal, &manager, &ascii_art, &vmrest_service);
     ratatui::restore();
     result
 }
 
-fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_art: &str) -> io::Result<()> {
+fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_art: &str, vmrest: &VmrestService) -> io::Result<()> {
     let mut list_state = VmListState::new();
     let mut message: Option<String> = None;
     let mut message_timer: Option<std::time::Instant> = None;
@@ -1849,11 +1856,14 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
             last_sys_refresh = std::time::Instant::now();
         }
 
+        // vmrest 状态
+        let vmrest_running = vmrest.is_running();
+
         // 渲染 UI
         terminal.draw(|frame| {
             match app_mode {
                 AppMode::List => {
-                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage);
+                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage, vmrest_running);
                 }
                 AppMode::Detail | AppMode::Confirm => {
                     if let Some(ref ds) = detail_state {
@@ -1893,7 +1903,7 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                     }
                 }
                 AppMode::CloneInput => {
-                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage);
+                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage, vmrest_running);
                     if let Some(ref ci) = clone_input {
                         render_clone_input(frame, ci);
                     }
@@ -1918,7 +1928,7 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                     }
                 }
                 AppMode::DeleteConfirm => {
-                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage);
+                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage, vmrest_running);
                     render_delete_vm_confirm(frame, &vms, &list_state);
                 }
                 AppMode::SharedFolder => {
@@ -1941,7 +1951,7 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                     }
                 }
                 AppMode::GuestLogin => {
-                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage);
+                    ui(frame, &vms, &mut list_state, &message, vm_count, ascii_art, cpu_usage, mem_usage, vmrest_running);
                     if let Some(ref gl) = guest_login {
                         render_guest_login(frame, gl);
                     }
@@ -1994,6 +2004,29 @@ fn run_app(terminal: &mut ratatui::DefaultTerminal, manager: &VmManager, ascii_a
                             }
                             KeyCode::Char('q') | KeyCode::Esc => {
                                 return Ok(());
+                            }
+                            KeyCode::Char('R') => {
+                                // 启动/停止 vmrest 服务
+                                if vmrest.is_running() {
+                                    match vmrest.stop() {
+                                        Ok(()) => {
+                                            message = Some("✓ vmrest 服务已停止".to_string());
+                                        }
+                                        Err(e) => {
+                                            message = Some(format!("✗ {}", e));
+                                        }
+                                    }
+                                } else {
+                                    match vmrest.start() {
+                                        Ok(()) => {
+                                            message = Some("✓ vmrest 服务已启动".to_string());
+                                        }
+                                        Err(e) => {
+                                            message = Some(format!("✗ {}", e));
+                                        }
+                                    }
+                                }
+                                message_timer = Some(std::time::Instant::now());
                             }
                             KeyCode::Char('i') => {
                                 // 进入配置详情视图

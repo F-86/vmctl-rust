@@ -124,10 +124,9 @@
 
 ---
 
-## 三、vmrest — REST API 服务
+## ~~三、vmrest — REST API 服务~~ ✅ 已集成
 
-**工具路径**: `/Applications/VMware Fusion.app/Contents/Library/vmrest`
-**版本**: 1.3.1 build-24832108
+> vmrest 已集成到本项目（按 `R` 启动/停止），通过 Unix Socket 通信。详见 `vmware-features-used.md`。
 
 vmrest 是 VMware Fusion Pro 内置的 HTTP REST API 服务，监听本地端口提供 JSON 接口。
 
@@ -228,4 +227,4 @@ ovftool /path/to/input.ova /path/to/output.vmx
 | ~~★★☆~~ | ~~删除 VM~~ | ✅ 已实现 |
 | ~~★☆☆~~ | ~~共享文件夹~~ | ✅ 已实现 |
 | ~~★☆☆~~ | ~~客户系统文件操作~~ | ✅ 已实现 |
-| ★☆☆ | vmrest 集成 | 大幅改变架构，适合 Web UI 场景 |
+| ~~★☆☆~~ | ~~vmrest 集成~~ | ✅ 已实现 |

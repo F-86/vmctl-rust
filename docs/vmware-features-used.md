@@ -29,6 +29,37 @@ vmrun 是 VMware Fusion 提供的命令行工具，用于控制虚拟机的生�
 | `createDirectoryInGuest` | `vmrun -gu -gp createDirectoryInGuest <vmx> <dir>` | 在客户系统中创建目录 |
 | `deleteFileInGuest` | `vmrun -gu -gp deleteFileInGuest <vmx> <path>` | 在客户系统中删除文件 |
 | `listHostNetworks` | `vmrun listHostNetworks` | 列出宿主虚拟网络 |
+
+---
+
+## 2. vmrest — REST API 服务
+
+**工具路径**: `/Applications/VMware Fusion.app/Contents/Library/vmrest`
+
+vmrest 是 VMware Fusion 内置的 HTTP REST API 长驻服务。本项目通过 Unix Socket 模式运行 vmrest（无需凭据配置），利用 HTTP API 进行快速的 VM 状态查询。
+
+### 集成方式
+
+- **启动**: 按 `R` 启动 vmrest（Unix Socket 模式，Socket 位于 `/tmp/vmrest.sock`）
+- **停止**: 再次按 `R` 停止
+- **状态显示**: header 底部 `REST: ●`（运行中）/ `REST: ○`（停止）
+
+### 使用的 API 端点
+
+| 方法 | 端点 | 功能 |
+|------|------|------|
+| GET | `/api/vms` | 列出所有已注册的虚拟机 |
+| GET | `/api/vms/{id}/power` | 获取电源状态 |
+
+### 通信实现
+
+通过 `std::os::unix::net::UnixStream` 直接与 vmrest Unix Socket 通信，手动构建 HTTP 请求和解析响应。无需外部 HTTP 库。
+
+```rust
+// src/vmrest.rs
+let stream = UnixStream::connect("/tmp/vmrest.sock")?;
+stream.write_all(b"GET /api/vms HTTP/1.1\r\nHost: localhost\r\n\r\n")?;
+```
 | `listPortForwardings` | `vmrun listPortForwardings <net>` | 列出端口转发规则 |
 | `setPortForwarding` | `vmrun setPortForwarding <net> ...` | 添加端口转发规则 |
 | `deletePortForwarding` | `vmrun deletePortForwarding <net> ...` | 删除端口转发规则 |
