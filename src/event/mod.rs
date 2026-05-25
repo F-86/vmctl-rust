@@ -5,6 +5,7 @@ pub mod clone;
 pub mod portfwd;
 pub mod shared;
 pub mod guest;
+pub mod ssh;
 
 use crossterm::event::KeyEvent;
 use crate::vm::Vm;
@@ -28,8 +29,18 @@ pub struct AppState {
     pub guest_state: Option<GuestFilesState>,
     pub guest_login: Option<GuestLoginState>,
     pub guest_file_input: Option<GuestFileInputState>,
+    pub ssh_login: Option<SshLoginState>,
+    /// SSH 执行请求：当设置为 Some 时，主循环会执行 SSH
+    pub ssh_exec: Option<SshExecRequest>,
     pub message: Option<String>,
     pub message_timer: Option<std::time::Instant>,
+}
+
+/// SSH 执行请求
+pub struct SshExecRequest {
+    pub user: String,
+    pub ip: String,
+    pub port: String,
 }
 
 impl AppState {
@@ -49,6 +60,8 @@ impl AppState {
             guest_state: None,
             guest_login: None,
             guest_file_input: None,
+            ssh_login: None,
+            ssh_exec: None,
             message: None,
             message_timer: None,
         }
@@ -91,5 +104,6 @@ pub fn handle_event(
         AppMode::GuestFiles => guest::handle_guest_files_event(state, key),
         AppMode::GuestFileInput => guest::handle_guest_file_input_event(state, key),
         AppMode::GuestFileConfirm => guest::handle_guest_file_confirm_event(state, key),
+        AppMode::SshLogin => ssh::handle_ssh_login_event(state, key),
     }
 }

@@ -9,3 +9,4 @@ pub mod portfwd;
 pub mod shared;
 pub mod guest;
 pub mod delete;
+pub mod ssh;

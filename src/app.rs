@@ -1,5 +1,6 @@
 use std::io;
 use std::time::Duration;
+use std::process::Command;
 
 use crossterm::event::{self, Event, KeyEventKind};
 use sysinfo::System;
@@ -16,6 +17,7 @@ use crate::ui::portfwd::{render_portfwd_view, render_portfwd_input, render_portf
 use crate::ui::shared::{render_shared_folder_view, render_shared_folder_input, render_shared_folder_delete_confirm};
 use crate::ui::guest::{render_guest_login, render_guest_files_view, render_guest_file_input, render_guest_file_delete_confirm};
 use crate::ui::delete::render_delete_vm_confirm;
+use crate::ui::ssh::render_ssh_login;
 use crate::event::{AppState, handle_event};
 
 /// 应用主循环
@@ -174,6 +176,12 @@ pub fn run_app(
                         render_guest_file_delete_confirm(frame, gs);
                     }
                 }
+                AppMode::SshLogin => {
+                    ui(frame, &vms, &mut list_state, &state.message, vm_count, ascii_art, cpu_usage, mem_usage, vmrest_running);
+                    if let Some(ref sl) = state.ssh_login {
+                        render_ssh_login(frame, sl);
+                    }
+                }
             }
         })?;
 
@@ -190,6 +198,40 @@ pub fn run_app(
                     return Ok(());
                 }
             }
+        }
+
+        // 检查是否需要执行 SSH
+        if let Some(ssh_req) = state.ssh_exec.take() {
+            // 暂时退出 TUI，恢复终端
+            ratatui::restore();
+
+            // 执行 SSH 命令
+            let status = Command::new("ssh")
+                .arg("-p")
+                .arg(&ssh_req.port)
+                .arg("-o")
+                .arg("StrictHostKeyChecking=no")
+                .arg(format!("{}@{}", ssh_req.user, ssh_req.ip))
+                .status();
+
+            match status {
+                Ok(exit_status) => {
+                    if exit_status.success() {
+                        state.set_message("✓ SSH 会话已结束".to_string());
+                    } else {
+                        state.set_message(format!(
+                            "✗ SSH 退出码: {}",
+                            exit_status.code().unwrap_or(-1)
+                        ));
+                    }
+                }
+                Err(e) => {
+                    state.set_message(format!("✗ SSH 启动失败: {}", e));
+                }
+            }
+
+            // 重新初始化终端
+            *terminal = ratatui::init();
         }
 
         // 清除消息（3 秒后）

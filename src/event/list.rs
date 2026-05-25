@@ -180,6 +180,22 @@ pub fn handle_list_event(
                 }
             }
         }
+        KeyCode::Char('t') => {
+            if let Some(vmx_path) = list_state.selected_vmx.clone() {
+                let vm = vms.iter().find(|vm| vm.vmx_path == vmx_path);
+                let vm_state = vm.map(|v| &v.state);
+                if vm_state != Some(&VmState::Running) {
+                    state.set_message("✗ 虚拟机必须运行中才能 SSH 连接".to_string());
+                } else if let Some(ref ip) = vm.and_then(|v| v.ip.clone()) {
+                    let vm_name = vm.map(|v| v.name.clone()).unwrap_or_default();
+                    state.ssh_login = Some(SshLoginState::new(vm_name, ip.clone()));
+                    state.app_mode = AppMode::SshLogin;
+                    state.message = None;
+                } else {
+                    state.set_message("✗ 无法获取虚拟机 IP 地址".to_string());
+                }
+            }
+        }
         KeyCode::Enter | KeyCode::Char('x') | KeyCode::Char('p') | KeyCode::Char('r') => {
             if let Some(vmx_path) = list_state.selected_vmx.clone() {
                 let op = match key.code {

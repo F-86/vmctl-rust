@@ -60,6 +60,7 @@ pub fn render_header(
     ];
     let col3 = vec![
         Line::from(vec![Span::styled("<g>", Style::new().fg(Color::Yellow)), Span::raw(" guest")]),
+        Line::from(vec![Span::styled("<t>", Style::new().fg(Color::Green)), Span::raw(" ssh")]),
         Line::from(vec![Span::styled("<R>", Style::new().fg(Color::Yellow)), Span::raw(" rest")]),
         Line::from(vec![Span::styled("<D>", Style::new().fg(Color::Red)), Span::raw(" delete")]),
         Line::from(vec![Span::styled("<q>", Style::new().fg(Color::Yellow)), Span::raw(" quit")]),

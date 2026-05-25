@@ -45,6 +45,8 @@ pub enum AppMode {
     GuestFileInput,
     /// 客户系统文件删除确认
     GuestFileConfirm,
+    /// SSH 连接凭据输入
+    SshLogin,
 }
 
 /// 可编辑的字段
@@ -300,6 +302,37 @@ pub enum GuestFileAction {
     Download(String),
     /// 创建目录：输入目录名
     Mkdir,
+}
+
+/// SSH 连接凭据输入状态
+pub struct SshLoginState {
+    /// 当前字段 (0=用户名, 1=端口)
+    pub field_index: usize,
+    /// 字段值 [用户名, 端口]
+    pub fields: [String; 2],
+    /// 目标 VM 名称
+    pub vm_name: String,
+    /// 目标 VM IP 地址
+    pub ip: String,
+}
+
+impl SshLoginState {
+    pub fn new(vm_name: String, ip: String) -> Self {
+        Self {
+            field_index: 0,
+            fields: ["root".to_string(), "22".to_string()],
+            vm_name,
+            ip,
+        }
+    }
+
+    pub fn field_label(&self, index: usize) -> &'static str {
+        match index {
+            0 => "用户名",
+            1 => "端口",
+            _ => "",
+        }
+    }
 }
 
 /// 虚拟机列表状态
