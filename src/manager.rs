@@ -76,7 +76,7 @@ impl VmManager {
     pub fn refresh_ip_addresses(&self) {
         let mut vms = self.vms.lock().unwrap();
         for vm in vms.iter_mut() {
-            vm.read_ip_from_vmx();
+            vm.refresh_ip();
         }
     }
 
@@ -206,6 +206,8 @@ impl VmManager {
                         let mut vm_list = vms.lock().unwrap();
                         if let Some(m) = vm_list.iter_mut().find(|m| m.vmx_path == path_buf) {
                             m.state = state;
+                            // 状态更新后刷新 IP
+                            m.refresh_ip();
                         }
                     }
                 }

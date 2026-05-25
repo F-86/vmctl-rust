@@ -16,6 +16,7 @@ vmrun 是 VMware Fusion 提供的命令行工具，用于控制虚拟机的生�
 | `stop` | `vmrun stop <vmx>` | 停止虚拟机（软关机） |
 | `suspend` | `vmrun suspend <vmx>` | 挂起虚拟机（保存内存快照到 .vmss 文件） |
 | `list` | `vmrun list` | 列出所有正在运行的虚拟机路径 |
+| `getGuestIPAddress` | `vmrun getGuestIPAddress <vmx>` | 获取运行中 VM 的真实 IP 地址 |
 | `listSnapshots` | `vmrun listSnapshots <vmx>` | 列出虚拟机的所有快照 |
 | `snapshot` | `vmrun snapshot <vmx> <name>` | 创建快照 |
 | `deleteSnapshot` | `vmrun deleteSnapshot <vmx> <name>` | 删除快照 |
@@ -165,9 +166,27 @@ scsi0:0.fileName = "Ubuntu.vmdk"
 - 值用双引号包裹
 - `#` 开头为注释行
 
-### IP 地址推导
+### IP 地址获取
 
-本项目通过 MAC 地址后两字节推算 NAT 网段 IP（VMware Fusion NAT 模式的 DHCP 分配规律）：
+本项目采用双重策略获取 VM 的 IP 地址：
+
+**1. 优先方式：`getGuestIPAddress`（运行中的 VM）**
+
+对于正在运行且已安装 VMware Tools 的虚拟机，通过 `vmrun getGuestIPAddress` 获取真实 IP。此方式返回客户系统实际分配的 IP，适用于所有网络模式（NAT、桥接、仅主机）。
+
+```rust
+// src/vm.rs
+if self.state == VmState::Running {
+    if let Ok(ip) = Vmrun::get_guest_ip(&self.vmx_path) {
+        self.ip = Some(ip);
+        return;
+    }
+}
+```
+
+**2. 回退方式：MAC 地址推算（VMware Tools 不可用时）**
+
+当 `getGuestIPAddress` 失败时（VM 未运行、Tools 未安装等），通过 .vmx 文件中的 MAC 地址后两字节推算 NAT 网段 IP：
 
 ```
 MAC: 00:0C:29:50:A2:D3
@@ -175,6 +194,8 @@ MAC: 00:0C:29:50:A2:D3
 IP:  172.16. 80 .162
          (0x50) (0xA2)
 ```
+
+> 注意：MAC 推算仅在 NAT 模式下近似有效，桥接模式下可能不准确。
 
 ---
 

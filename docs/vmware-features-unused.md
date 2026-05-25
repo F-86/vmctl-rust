@@ -90,7 +90,7 @@
 
 | 命令 | 功能 | 用法 |
 |------|------|------|
-| `getGuestIPAddress` | 获取客户系统 IP | `vmrun getGuestIPAddress <vmx> [-wait]` |
+| ~~`getGuestIPAddress`~~ | ~~获取客户系统 IP~~ | ✅ 已实现 |
 | `checkToolsState` | 检查 VMware Tools 状态 | `vmrun checkToolsState <vmx>` |
 | `installTools` | 安装 VMware Tools | `vmrun installTools <vmx>` |
 | `upgradevm` | 升级虚拟硬件版本 | `vmrun upgradevm <vmx>` |
@@ -98,7 +98,7 @@
 | `clone` | 克隆虚拟机 | `vmrun clone <vmx> <目标vmx> full\|linked [-snapshot=名称]` |
 | `downloadPhotonVM` | 下载 Photon OS 模板 | `vmrun downloadPhotonVM <路径>` |
 
-> **注意**: `getGuestIPAddress` 是获取客户 IP 的官方方式（需要 VMware Tools），比本项目通过 MAC 推算更准确，但要求 VM 正在运行且 Tools 已安装。
+> `getGuestIPAddress` 已集成到本项目中，详见 `vmware-features-used.md`。
 
 ---
 
@@ -226,7 +226,7 @@ ovftool /path/to/input.ova /path/to/output.vmx
 | 优先级 | 功能 | 理由 |
 |--------|------|------|
 | ~~★★★~~ | ~~快照管理~~ | ✅ 已实现 |
-| ★★★ | `getGuestIPAddress` | 比 MAC 推算更准确 |
+| ~~★★★~~ | ~~`getGuestIPAddress`~~ | ✅ 已实现 |
 | ★★☆ | 克隆 VM | 创建测试环境常用 |
 | ★★☆ | 端口转发管理 | 方便访问 VM 内服务 |
 | ★★☆ | 删除 VM | 完善生命周期管理 |

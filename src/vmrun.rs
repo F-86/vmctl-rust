@@ -176,4 +176,15 @@ impl Vmrun {
         Self::execute(&["revertToSnapshot", vmx_path.to_str().unwrap(), name])?;
         Ok(())
     }
+
+    /// 获取客户操作系统的 IP 地址（需要 VMware Tools 已安装且 VM 正在运行）
+    pub fn get_guest_ip(vmx_path: &PathBuf) -> Result<String, VmrunError> {
+        let output = Self::execute(&["getGuestIPAddress", vmx_path.to_str().unwrap()])?;
+        let ip = output.trim().to_string();
+        if ip.is_empty() {
+            Err(VmrunError::CommandFailed("未获取到 IP 地址".to_string()))
+        } else {
+            Ok(ip)
+        }
+    }
 }

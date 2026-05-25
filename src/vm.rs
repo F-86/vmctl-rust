@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use crate::vmrun::Vmrun;
 
 /// 虚拟机状态枚举
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +54,22 @@ impl Vm {
         }
     }
 
-    /// 从 .vmx 文件读取 IP 地址
+    /// 获取 IP 地址
+    /// 运行中的 VM 优先使用 getGuestIPAddress（需要 VMware Tools），
+    /// 失败时回退到 MAC 地址推算
+    pub fn refresh_ip(&mut self) {
+        if self.state == VmState::Running {
+            // 优先尝试 getGuestIPAddress（更准确）
+            if let Ok(ip) = Vmrun::get_guest_ip(&self.vmx_path) {
+                self.ip = Some(ip);
+                return;
+            }
+        }
+        // 回退到 MAC 地址推算
+        self.read_ip_from_vmx();
+    }
+
+    /// 从 .vmx 文件读取 IP 地址（通过 MAC 推算）
     pub fn read_ip_from_vmx(&mut self) {
         if let Ok(content) = std::fs::read_to_string(&self.vmx_path) {
             for line in content.lines() {
