@@ -73,41 +73,62 @@ ascii_file = "ascii.txt"
 | `x` | 停止虚拟机 |
 | `p` | 挂起虚拟机 |
 | `r` | 继续运行（恢复） |
+| `i` | 查看/编辑虚拟机配置 |
 | `q` | 退出 |
+
+### 配置详情视图（按 `i` 进入）
+
+| 按键 | 功能 |
+|------|------|
+| `w` / `s` 或 `↑` / `↓` | 上下移动选择 |
+| `e` | 编辑选中字段（CPU/内存/磁盘大小） |
+| `W` | 保存修改 |
+| `u` | 撤销未保存的修改 |
+| `Esc` / `i` | 返回列表 |
 
 ## 设计
 
 ### 架构
 
-```
-┌─────────────────────────────────────────┐
-│                 main.rs                 │
-│  ┌─────────────┐  ┌──────────────────┐  │
-│  │  Terminal   │  │  Event Loop      │  │
-│  │  Renderer   │  │  (Input Handler) │  │
-│  └──────┬──────┘  └────────┬─────────┘  │
-│         │                  │            │
-│         ▼                  ▼            │
-│  ┌─────────────────────────────────┐    │
-│  │         VmManager               │    │
-│  │  - 加载配置                      │    │
-│  │  - 定时刷新虚拟机状态             │    │
-│  │  - 管理 vmrun 命令执行           │    │
-│  └─────────────────────────────────┘    │
-│         │                  │            │
-│         ▼                  ▼            │
-│  ┌─────────────┐  ┌──────────────────┐  │
-│  │    vm.rs    │  │    vmrun.rs      │  │
-│  │  Vm 结构体  │  │  vmrun 封装      │  │
-│  │  MAC→IP    │  │  状态检测        │  │
-│  └─────────────┘  └──────────────────┘  │
-└─────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph "main.rs"
+        Renderer["Terminal Renderer<br/>(ratatui)"]
+        EventLoop["Event Loop<br/>(crossterm)"]
+    end
+
+    subgraph "manager.rs"
+        VmManager["VmManager<br/>- VM 发现与扫描<br/>- 状态定时刷新<br/>- 操作协调"]
+    end
+
+    subgraph "核心模块"
+        VM["vm.rs<br/>Vm 结构体 / MAC→IP"]
+        Vmrun["vmrun.rs<br/>vmrun CLI 封装"]
+        Vmx["vmx.rs<br/>VMX 文件解析/写入<br/>磁盘扩容"]
+    end
+
+    subgraph "VMware Fusion"
+        vmrunBin["vmrun"]
+        vdiskBin["vmware-vdiskmanager"]
+        vmxFile[".vmx 配置文件"]
+    end
+
+    Renderer --> VmManager
+    EventLoop --> VmManager
+    VmManager --> VM
+    VmManager --> Vmrun
+    VmManager --> Vmx
+    Vmrun -->|"子进程调用"| vmrunBin
+    Vmx -->|"读写"| vmxFile
+    Vmx -->|"磁盘扩容"| vdiskBin
+    VM -->|"解析 MAC"| vmxFile
 ```
 
 ### 模块
 
 - **vm.rs** - 虚拟机数据结构，包含路径、名称、状态、IP
 - **vmrun.rs** - vmrun 命令封装，提供启动/停止/挂起/恢复等操作
+- **vmx.rs** - VMX 配置文件解析与写入，硬件配置提取，磁盘扩容
 - **manager.rs** - 虚拟机管理器，负责定时刷新状态和操作协调
 - **main.rs** - 主程序入口，TUI 渲染和事件处理
 
