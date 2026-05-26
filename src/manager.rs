@@ -64,6 +64,9 @@ impl VmManager {
             }
         }
 
+        // 按虚拟机名称排序
+        vms.sort_by(|a, b| a.name.cmp(&b.name));
+
         Ok(())
     }
 
@@ -191,6 +194,8 @@ impl VmManager {
                         }
                     }
                 }
+                // 按虚拟机名称排序
+                new_vms.sort_by(|a, b| a.name.cmp(&b.name));
                 *vm_list = new_vms;
                 drop(vm_list);
 
