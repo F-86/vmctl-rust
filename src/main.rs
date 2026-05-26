@@ -1,5 +1,6 @@
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 mod vm;
 mod vmrun;
@@ -81,8 +82,16 @@ fn main() -> io::Result<()> {
     // 加载 ASCII 艺术字
     let ascii_art = load_ascii();
 
-    // 创建 VM 管理器
-    let manager = VmManager::new(config.vm_dir);
+    // 创建 vmrest 服务（用 Arc 共享给 manager 和 app）
+    let vmrest_service = Arc::new(VmrestService::new());
+
+    // 自动启动 vmrest 服务
+    if let Err(e) = vmrest_service.start() {
+        eprintln!("vmrest 自动启动失败（将回退到 vmrun）: {}", e);
+    }
+
+    // 创建 VM 管理器（传入 vmrest 引用）
+    let manager = VmManager::new(config.vm_dir, Some(Arc::clone(&vmrest_service)));
 
     // 扫描虚拟机
     if let Err(e) = manager.scan_vms() {
@@ -94,9 +103,6 @@ fn main() -> io::Result<()> {
 
     // 启动状态刷新线程
     manager.start_state_refresher(config.refresh_interval);
-
-    // 创建 vmrest 服务
-    let vmrest_service = VmrestService::new();
 
     // 初始化终端
     let mut terminal = ratatui::init();

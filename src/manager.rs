@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 use crate::vm::{Vm, VmState};
 use crate::vmrun::{Vmrun, VmrunError};
+use crate::vmrest::{VmrestService, vmrest_power_to_state};
 
 /// 虚拟机管理器
 pub struct VmManager {
@@ -12,14 +13,17 @@ pub struct VmManager {
     vms: Arc<Mutex<Vec<Vm>>>,
     /// 扫描目录
     scan_dir: PathBuf,
+    /// vmrest 服务引用（可选）
+    vmrest: Option<Arc<VmrestService>>,
 }
 
 impl VmManager {
     /// 创建新的 VM 管理器
-    pub fn new(scan_dir: PathBuf) -> Self {
+    pub fn new(scan_dir: PathBuf, vmrest: Option<Arc<VmrestService>>) -> Self {
         VmManager {
             vms: Arc::new(Mutex::new(Vec::new())),
             scan_dir,
+            vmrest,
         }
     }
 
@@ -145,78 +149,176 @@ impl VmManager {
     pub fn start_state_refresher(&self, interval_secs: u64) {
         let vms = Arc::clone(&self.vms);
         let scan_dir = self.scan_dir.clone();
+        let vmrest = self.vmrest.clone();
 
         thread::spawn(move || {
             loop {
                 thread::sleep(Duration::from_secs(interval_secs));
 
-                // 重新扫描目录（检测新增/删除的虚拟机）
-                let mut vm_list = vms.lock().unwrap();
-                let existing: HashMap<PathBuf, (VmState, Option<String>)> = vm_list
-                    .iter()
-                    .map(|vm| (vm.vmx_path.clone(), (vm.state.clone(), vm.ip.clone())))
-                    .collect();
+                // 优先使用 vmrest REST API 刷新
+                let used_vmrest = if let Some(ref vmrest_svc) = vmrest {
+                    if vmrest_svc.is_running() {
+                        Self::refresh_via_vmrest(vmrest_svc, &vms, &scan_dir)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
 
-                // 重新扫描
-                let mut new_vms = Vec::new();
-                if let Ok(entries) = std::fs::read_dir(&scan_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_dir() {
-                            if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
-                                if dir_name.ends_with(".vmwarevm") {
-                                    if let Ok(entries) = std::fs::read_dir(&path) {
-                                        for vmx_entry in entries.flatten() {
-                                            let vmx_path = vmx_entry.path();
-                                            if vmx_path.extension().and_then(|e| e.to_str()) == Some("vmx") {
-                                                let (state, ip) = existing
-                                                    .get(&vmx_path)
-                                                    .cloned()
-                                                    .unwrap_or((VmState::Unknown, None));
-                                                let name = vmx_path
-                                                    .parent()
-                                                    .and_then(|p| p.file_name())
-                                                    .and_then(|n| n.to_str())
-                                                    .unwrap_or("Unknown")
-                                                    .replace(".vmwarevm", "")
-                                                    .to_string();
-                                                new_vms.push(Vm {
-                                                    vmx_path,
-                                                    name,
-                                                    state,
-                                                    ip,
-                                                });
-                                            }
-                                        }
+                // vmrest 不可用时，回退到 vmrun 方式
+                if !used_vmrest {
+                    Self::refresh_via_vmrun(&vms, &scan_dir);
+                }
+            }
+        });
+    }
+
+    /// 通过 vmrest REST API 刷新虚拟机列表和状态
+    fn refresh_via_vmrest(
+        vmrest_svc: &VmrestService,
+        vms: &Arc<Mutex<Vec<Vm>>>,
+        scan_dir: &Path,
+    ) -> bool {
+        // 尝试通过 REST API 获取 VM 列表
+        let rest_vms = match vmrest_svc.list_vms() {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+
+        // 保留现有 IP 信息
+        let existing_ips: HashMap<PathBuf, Option<String>> = {
+            let vm_list = vms.lock().unwrap();
+            vm_list.iter()
+                .map(|vm| (vm.vmx_path.clone(), vm.ip.clone()))
+                .collect()
+        };
+
+        // 构建新的 VM 列表
+        let mut new_vms: Vec<Vm> = rest_vms.iter()
+            .filter(|rvm| rvm.path.starts_with(scan_dir))
+            .map(|rvm| {
+                let state = rvm.power_state.as_deref()
+                    .map(vmrest_power_to_state)
+                    .unwrap_or(VmState::Unknown);
+                let ip = existing_ips.get(&rvm.path).cloned().flatten();
+                Vm {
+                    vmx_path: rvm.path.clone(),
+                    name: rvm.name.clone(),
+                    state,
+                    ip,
+                }
+            })
+            .collect();
+
+        // 按虚拟机名称排序
+        new_vms.sort_by(|a, b| a.name.cmp(&b.name));
+
+        // 更新列表
+        {
+            let mut vm_list = vms.lock().unwrap();
+            *vm_list = new_vms;
+        }
+
+        // 刷新运行中 VM 的 IP 地址
+        let vm_paths: Vec<(PathBuf, VmState)> = vms.lock().unwrap()
+            .iter()
+            .map(|vm| (vm.vmx_path.clone(), vm.state.clone()))
+            .collect();
+
+        for (path_buf, state) in vm_paths {
+            if state == VmState::Running {
+                // 尝试获取 IP
+                if let Ok(ip) = Vmrun::get_guest_ip(&path_buf) {
+                    let mut vm_list = vms.lock().unwrap();
+                    if let Some(m) = vm_list.iter_mut().find(|m| m.vmx_path == path_buf) {
+                        m.ip = Some(ip);
+                    }
+                } else {
+                    // 回退到 vmx 文件读取 MAC 推算
+                    let mut vm_list = vms.lock().unwrap();
+                    if let Some(m) = vm_list.iter_mut().find(|m| m.vmx_path == path_buf) {
+                        m.read_ip_from_vmx();
+                    }
+                }
+            }
+        }
+
+        true
+    }
+
+    /// 通过 vmrun 命令行刷新虚拟机列表和状态（回退方案）
+    fn refresh_via_vmrun(vms: &Arc<Mutex<Vec<Vm>>>, scan_dir: &Path) {
+        // 重新扫描目录（检测新增/删除的虚拟机）
+        let existing: HashMap<PathBuf, (VmState, Option<String>)> = {
+            let vm_list = vms.lock().unwrap();
+            vm_list.iter()
+                .map(|vm| (vm.vmx_path.clone(), (vm.state.clone(), vm.ip.clone())))
+                .collect()
+        };
+
+        // 重新扫描
+        let mut new_vms = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(scan_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(dir_name) = path.file_name().and_then(|n| n.to_str()) {
+                        if dir_name.ends_with(".vmwarevm") {
+                            if let Ok(entries) = std::fs::read_dir(&path) {
+                                for vmx_entry in entries.flatten() {
+                                    let vmx_path = vmx_entry.path();
+                                    if vmx_path.extension().and_then(|e| e.to_str()) == Some("vmx") {
+                                        let (state, ip) = existing
+                                            .get(&vmx_path)
+                                            .cloned()
+                                            .unwrap_or((VmState::Unknown, None));
+                                        let name = vmx_path
+                                            .parent()
+                                            .and_then(|p| p.file_name())
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("Unknown")
+                                            .replace(".vmwarevm", "")
+                                            .to_string();
+                                        new_vms.push(Vm {
+                                            vmx_path,
+                                            name,
+                                            state,
+                                            ip,
+                                        });
                                     }
                                 }
                             }
                         }
                     }
                 }
-                // 按虚拟机名称排序
-                new_vms.sort_by(|a, b| a.name.cmp(&b.name));
-                *vm_list = new_vms;
-                drop(vm_list);
+            }
+        }
 
-                // 刷新所有状态 - 收集所有 vm 路径
-                let vm_paths: Vec<PathBuf> = vms.lock().unwrap()
-                    .iter()
-                    .map(|vm| vm.vmx_path.clone())
-                    .collect();
+        // 按虚拟机名称排序
+        new_vms.sort_by(|a, b| a.name.cmp(&b.name));
 
-                // 对每个虚拟机获取状态
-                for path_buf in vm_paths {
-                    if let Ok(state) = Vmrun::get_state(&path_buf) {
-                        let mut vm_list = vms.lock().unwrap();
-                        if let Some(m) = vm_list.iter_mut().find(|m| m.vmx_path == path_buf) {
-                            m.state = state;
-                            // 状态更新后刷新 IP
-                            m.refresh_ip();
-                        }
-                    }
+        {
+            let mut vm_list = vms.lock().unwrap();
+            *vm_list = new_vms;
+        }
+
+        // 刷新所有状态 - 收集所有 vm 路径
+        let vm_paths: Vec<PathBuf> = vms.lock().unwrap()
+            .iter()
+            .map(|vm| vm.vmx_path.clone())
+            .collect();
+
+        // 对每个虚拟机获取状态
+        for path_buf in vm_paths {
+            if let Ok(state) = Vmrun::get_state(&path_buf) {
+                let mut vm_list = vms.lock().unwrap();
+                if let Some(m) = vm_list.iter_mut().find(|m| m.vmx_path == path_buf) {
+                    m.state = state;
+                    // 状态更新后刷新 IP
+                    m.refresh_ip();
                 }
             }
-        });
+        }
     }
 }

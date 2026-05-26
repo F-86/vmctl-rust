@@ -732,8 +732,8 @@ KeyCode::Enter => {
 
 ### 4.9 vmrest REST API 集成
 
-**涉及文件**: `vmrest.rs`, `main.rs`  
-**快捷键**: `R` (Shift+R) 启动/停止
+**涉及文件**: `vmrest.rs`, `manager.rs`, `main.rs`  
+**快捷键**: `R` (Shift+R) 手动启动/停止（默认自动启动）
 
 #### 为什么集成 vmrest
 
@@ -743,6 +743,44 @@ KeyCode::Enter => {
 | 启动开销 | ~50ms/次 | 0（已启动） |
 | 适合场景 | 低频操作 | 高频查询（状态轮询） |
 | 配置需求 | 无 | 需要凭据（本项目用 Unix Socket 绕过） |
+
+#### 自动启动与回退机制
+
+应用启动时自动启动 vmrest 服务，无需手动按 `R`。后台刷新线程采用双路径策略：
+
+```mermaid
+flowchart TD
+    A[后台刷新 - 每 5 秒] --> B{vmrest 运行中?}
+    B -->|是| C["GET /api/vms (单次 REST 调用)"]
+    C --> D[解析 power_state 字段]
+    D --> E[映射为 VmState 枚举]
+    E --> F[刷新运行中 VM 的 IP]
+    B -->|否| G[文件系统扫描 .vmwarevm 目录]
+    G --> H[vmrun list + get_state 逐个查询]
+    H --> I[vmrun getGuestIPAddress 获取 IP]
+```
+
+**性能对比**（假设 10 个虚拟机）：
+
+| 方式 | 每次刷新的系统调用 | 耗时估算 |
+|------|------------------|---------|
+| vmrun 回退方式 | 10+ 次 fork/exec | ~500ms |
+| vmrest REST 方式 | 1 次 socket 连接 | ~5ms |
+
+#### 电源状态映射
+
+vmrest API 返回的 `power_state` 字段映射到内部 `VmState` 枚举：
+
+```rust
+pub fn vmrest_power_to_state(power_state: &str) -> VmState {
+    match power_state {
+        "poweredOn"  => VmState::Running,
+        "poweredOff" => VmState::Stopped,
+        "suspended"  => VmState::Paused,
+        _            => VmState::Unknown,
+    }
+}
+```
 
 #### Unix Socket 模式
 
@@ -784,13 +822,25 @@ fn request(&self, method: &str, path: &str) -> Result<String, String> {
 不引入 serde_json，手动解析 vmrest 返回的简单 JSON：
 
 ```rust
-// 从 {"id":"abc","path":"/...","name":"VM"} 中提取字段
+// 从 {"id":"abc","path":"/...","power_state":"poweredOn"} 中提取字段
 fn extract_json_value(json: &str, key: &str) -> Result<String, String> {
     // 1. 搜索 "key":
     // 2. 跳到冒号后
     // 3. 如果是引号开头 → 提取字符串值
     // 4. 否则 → 提取到逗号/}为止
 }
+```
+
+#### 共享与线程安全
+
+`VmrestService` 通过 `Arc` 在主线程和后台刷新线程间共享：
+
+```rust
+let vmrest = Arc::new(VmrestService::new());
+// 传给 VmManager（后台线程使用）
+let manager = VmManager::new(config.vm_dir, Some(Arc::clone(&vmrest)));
+// 传给 run_app（主线程 UI 使用）
+app::run_app(&mut terminal, &manager, &ascii_art, &vmrest);
 ```
 
 #### 生命周期管理
@@ -960,18 +1010,29 @@ flowchart TB
 
     subgraph BgThread["后台线程 (状态刷新)"]
         B1[每 5 秒执行]
-        B2[重新扫描 VM 目录]
-        B3[刷新所有 VM 状态 - vmrun list]
-        B4[刷新 IP 地址 - getGuestIPAddress]
+        B2{vmrest 运行中?}
+        B3["REST API: GET /api/vms<br/>(单次调用获取全部状态)"]
+        B4[回退: 扫描目录 + vmrun list]
+        B5[刷新 IP 地址]
+        B1 --> B2
+        B2 -->|是| B3
+        B2 -->|否| B4
+        B3 --> B5
+        B4 --> B5
     end
 
+    VmrestSvc["Arc&lt;VmrestService&gt;<br/>共享 vmrest 服务"]
     MainThread <-->|"Arc&lt;Mutex&lt;Vec&lt;Vm&gt;&gt;&gt;"| BgThread
+    MainThread -.->|"状态查询/R键控制"| VmrestSvc
+    BgThread -.->|"REST API 调用"| VmrestSvc
 ```
 
-**同步机制**: `Arc<Mutex<Vec<Vm>>>`
-- `Arc`: 引用计数，允许多线程持有
-- `Mutex`: 互斥锁，一次只有一个线程可读写
-- 后台线程在扫描和刷新时短暂持锁，主线程在获取列表时 `clone()` 后立即释放锁
+**同步机制**:
+- `Arc<Mutex<Vec<Vm>>>`: VM 列表在主线程和后台线程间共享
+  - `Arc`: 引用计数，允许多线程持有
+  - `Mutex`: 互斥锁，一次只有一个线程可读写
+  - 后台线程在扫描和刷新时短暂持锁，主线程在获取列表时 `clone()` 后立即释放锁
+- `Arc<VmrestService>`: vmrest 服务在主线程（UI 状态显示、R 键控制）和后台线程（REST API 查询）间共享
 
 ---
 

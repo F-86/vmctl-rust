@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::process::{Command, Child};
 use std::sync::{Arc, Mutex};
 
+use crate::vm::VmState;
+
 /// vmrest Unix Socket 路径
 const VMREST_SOCKET: &str = "/tmp/vmrest.sock";
 
@@ -166,6 +168,18 @@ pub struct VmrestVm {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
+    /// 电源状态（poweredOn / poweredOff / suspended）
+    pub power_state: Option<String>,
+}
+
+/// 将 vmrest 的电源状态字符串映射为 VmState 枚举
+pub fn vmrest_power_to_state(power_state: &str) -> VmState {
+    match power_state {
+        "poweredOn" => VmState::Running,
+        "poweredOff" => VmState::Stopped,
+        "suspended" => VmState::Paused,
+        _ => VmState::Unknown,
+    }
 }
 
 /// 简易 JSON 解析：从 VM 列表响应中提取 VM 信息
@@ -208,6 +222,7 @@ fn parse_vm_list(json: &str) -> Result<Vec<VmrestVm>, String> {
         let obj = &json[start..i];
         let id = extract_json_value(obj, "id").unwrap_or_default();
         let path_str = extract_json_value(obj, "path").unwrap_or_default();
+        let power_state = extract_json_value(obj, "power_state").ok();
 
         if !id.is_empty() && !path_str.is_empty() {
             let path = PathBuf::from(&path_str);
@@ -216,7 +231,7 @@ fn parse_vm_list(json: &str) -> Result<Vec<VmrestVm>, String> {
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .replace(".vmwarevm", "");
-            vms.push(VmrestVm { id, name, path });
+            vms.push(VmrestVm { id, name, path, power_state });
         }
     }
 

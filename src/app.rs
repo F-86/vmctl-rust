@@ -1,6 +1,7 @@
 use std::io;
 use std::time::Duration;
 use std::process::Command;
+use std::sync::Arc;
 
 use crossterm::event::{self, Event, KeyEventKind};
 use sysinfo::System;
@@ -25,7 +26,7 @@ pub fn run_app(
     terminal: &mut ratatui::DefaultTerminal,
     manager: &VmManager,
     ascii_art: &str,
-    vmrest: &VmrestService,
+    vmrest: &Arc<VmrestService>,
 ) -> io::Result<()> {
     let mut state = AppState::new();
     let mut list_state = VmListState::new();
