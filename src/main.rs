@@ -1,3 +1,4 @@
+use std::env;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,42 +16,53 @@ use manager::VmManager;
 use vmrun::set_vmrun_path;
 use vmrest::VmrestService;
 
-/// 配置文件结构
+/// 环境变量名称常量
+const ENV_VMRUN_PATH: &str = "VMCTL_VMRUN_PATH";
+const ENV_VM_DIR: &str = "VMCTL_VM_DIR";
+const ENV_REFRESH_INTERVAL: &str = "VMCTL_REFRESH_INTERVAL";
+const ENV_LOGO_PATH: &str = "VMCTL_LOGO_PATH";
+
+/// 内置的 ASCII 艺术字（当未指定 logo 路径或读取失败时回退使用）
+const DEFAULT_ASCII: &str = "__     ____  __  ____ _____ _     
+\\ \\   / /  \\/  |/ ___|_   _| |    
+ \\ \\ / /| |\\/| | |     | | | |    
+  \\ V / | |  | | |___  | | | |___ 
+   \\_/  |_|  |_|\\____| |_| |_____|
+";
+
+/// 配置结构（来源：环境变量）
 struct Config {
+    #[allow(dead_code)]
     vmrun_path: String,
     vm_dir: PathBuf,
     refresh_interval: u64,
 }
 
 impl Config {
+    /// 从环境变量加载配置，未设置时使用默认值
     fn load() -> Self {
-        let mut vmrun_path = "/Applications/VMware Fusion.app/Contents/Library/vmrun".to_string();
-        let mut vm_dir = PathBuf::from("/Users/jane/Virtual Machines.localized");
-        let mut refresh_interval = 5u64;
+        // vmrun 可执行文件路径
+        let vmrun_path = env::var(ENV_VMRUN_PATH)
+            .unwrap_or_else(|_| {
+                "/Applications/VMware Fusion.app/Contents/Library/vmrun".to_string()
+            });
 
-        if let Ok(content) = std::fs::read_to_string("config.toml") {
-            for line in content.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                if let Some(eq_pos) = line.find('=') {
-                    let key = line[..eq_pos].trim();
-                    let value = line[eq_pos + 1..].trim();
-                    match key {
-                        "vmrun_path" => vmrun_path = value.to_string(),
-                        "vm_dir" => vm_dir = PathBuf::from(value),
-                        "refresh_interval" => {
-                            if let Ok(interval) = value.parse() {
-                                refresh_interval = interval;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
+        // 虚拟机目录
+        let vm_dir = env::var(ENV_VM_DIR)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                // 默认使用 $HOME/Virtual Machines.localized
+                let home = env::var("HOME").unwrap_or_else(|_| "/".to_string());
+                PathBuf::from(home).join("Virtual Machines.localized")
+            });
 
+        // 状态刷新间隔（秒）
+        let refresh_interval = env::var(ENV_REFRESH_INTERVAL)
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(5);
+
+        // 将 vmrun 路径同步到全局
         set_vmrun_path(vmrun_path.clone());
 
         Config {
@@ -61,26 +73,28 @@ impl Config {
     }
 }
 
-/// 读取 ASCII 艺术字
+/// 从环境变量 `VMCTL_LOGO_PATH` 指定的文件读取 ASCII 艺术字
+/// 未设置或读取失败时回退到内置 logo
 fn load_ascii() -> String {
-    if let Ok(content) = std::fs::read_to_string("ascii.txt") {
-        content
-    } else {
-        "__     ____  __  ____ _____ _     
-\\ \\   / /  \\/  |/ ___|_   _| |    
- \\ \\ / /| |\\/| | |     | | | |    
-  \\ V / | |  | | |___  | | | |___ 
-   \\_/  |_|  |_|\\____| |_| |_____|
-"
-        .to_string()
+    match env::var(ENV_LOGO_PATH) {
+        Ok(path) if !path.is_empty() => {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(e) => {
+                    eprintln!("读取 logo 文件失败 ({}): {}，使用内置 logo", path, e);
+                    DEFAULT_ASCII.to_string()
+                }
+            }
+        }
+        _ => DEFAULT_ASCII.to_string(),
     }
 }
 
 fn main() -> io::Result<()> {
-    // 加载配置
+    // 加载配置（来自环境变量）
     let config = Config::load();
 
-    // 加载 ASCII 艺术字
+    // 加载 ASCII 艺术字（来自 VMCTL_LOGO_PATH 指定的文件）
     let ascii_art = load_ascii();
 
     // 创建 vmrest 服务（用 Arc 共享给 manager 和 app）

@@ -46,23 +46,23 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ## 配置
 
-首次运行前，创建 `~/.config/v9s/config.toml`（注意：代码中读取的是当前目录的 `config.toml`，可复制到项目根目录）：
+vmctl 通过**环境变量**加载配置，可在 shell 配置文件（`.zshrc` / `.bashrc`）中导出：
 
-```toml
-vmrun_path = "/Applications/VMware Fusion.app/Contents/Library/vmrun"
-vm_dir = "/Users/username/Virtual Machines.localized"
-refresh_interval = 5
-ascii_file = "ascii.txt"
+```bash
+export VMCTL_VMRUN_PATH="/Applications/VMware Fusion.app/Contents/Library/vmrun"
+export VMCTL_VM_DIR="$HOME/Virtual Machines.localized"
+export VMCTL_REFRESH_INTERVAL=5
+export VMCTL_LOGO_PATH="$HOME/.config/vmctl/logo.txt"
 ```
 
 ### 配置说明
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `vmrun_path` | vmrun 命令路径 | `/Applications/VMware Fusion.app/Contents/Library/vmrun` |
-| `vm_dir` | 虚拟机目录 | `~/Virtual Machines.localized` |
-| `refresh_interval` | 状态刷新间隔（秒） | `5` |
-| `ascii_file` | ASCII 艺术字文件 | `ascii.txt` |
+| 环境变量 | 说明 | 默认值 |
+|----------|------|--------|
+| `VMCTL_VMRUN_PATH` | vmrun 命令路径 | `/Applications/VMware Fusion.app/Contents/Library/vmrun` |
+| `VMCTL_VM_DIR` | 虚拟机目录 | `$HOME/Virtual Machines.localized` |
+| `VMCTL_REFRESH_INTERVAL` | 状态刷新间隔（秒） | `5` |
+| `VMCTL_LOGO_PATH` | ASCII 艺术字文件路径（未设置时使用内置 logo） | 未设置 |
 
 ## 操作
 
